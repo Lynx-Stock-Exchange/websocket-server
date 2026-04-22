@@ -1,10 +1,23 @@
 package ws
 
+import "time"
+
+const (
+	maxMessageSize = 5120
+	pongWait       = 60 * time.Second
+)
+
 func (c *Client) readPump() {
 	defer func() {
 		c.hub.Unregister(c)
 		_ = c.conn.Close()
 	}()
+
+	c.conn.SetReadLimit(maxMessageSize)
+	_ = c.conn.SetReadDeadline(time.Now().Add(pongWait))
+	c.conn.SetPongHandler(func(string) error {
+		return c.conn.SetReadDeadline(time.Now().Add(pongWait))
+	})
 
 	for {
 		var envelope IncomingEnvelope
@@ -12,7 +25,17 @@ func (c *Client) readPump() {
 			return
 		}
 
-		// TODO: Route SUBSCRIBE to subscription handling.
-		// TODO: Route PLACE_ORDER to order handling.
+		switch envelope.Type {
+		case MessageSubscribe:
+			if !c.handleSubscribe(envelope.Payload) {
+				return
+			}
+		case MessagePlaceOrder:
+			if !c.handlePlaceOrder(envelope.Payload) {
+				return
+			}
+		default:
+			return
+		}
 	}
 }

@@ -1,10 +1,52 @@
 package ws
 
-// TODO: Define subscription channel names from the spec:
-// - PRICE_FEED with tickers: ["ARKA", "MNVS"]
-// - ORDER_UPDATES for platform/order status changes.
-// - MARKET_EVENTS for event pushes.
-// - ORDER_BOOK with ticker: "ARKA"
-//
-// TODO: Parse SUBSCRIBE payloads, normalize tickers, and ask the hub to update in-memory and persisted subscription state.
-// Multiple subscriptions can be active simultaneously on the same websocket connection.
+import (
+	"encoding/json"
+	"strings"
+)
+
+func (c *Client) handleSubscribe(raw json.RawMessage) bool {
+	var payload SubscribePayload
+	if err := json.Unmarshal(raw, &payload); err != nil {
+		return false
+	}
+
+	switch payload.Channel {
+	case ChannelPriceFeed:
+		return normalizeTickers(payload.Tickers) != nil
+	case ChannelOrderUpdates, ChannelMarketEvents:
+		return true
+	case ChannelOrderBook:
+		return normalizeTicker(payload.Ticker) != ""
+	default:
+		return false
+	}
+}
+
+func normalizeTickers(tickers []string) []string {
+	normalized := make([]string, 0, len(tickers))
+	seen := make(map[string]struct{}, len(tickers))
+
+	for _, ticker := range tickers {
+		ticker = normalizeTicker(ticker)
+		if ticker == "" {
+			continue
+		}
+		if _, exists := seen[ticker]; exists {
+			continue
+		}
+
+		seen[ticker] = struct{}{}
+		normalized = append(normalized, ticker)
+	}
+
+	if len(normalized) == 0 {
+		return nil
+	}
+
+	return normalized
+}
+
+func normalizeTicker(ticker string) string {
+	return strings.ToUpper(strings.TrimSpace(ticker))
+}
