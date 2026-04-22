@@ -1,0 +1,11 @@
+# Local build output and editor files.
+bin/
+dist/
+coverage.out
+.env
+.vscode/
+.idea/
+
+# Go workspace noise.
+*.test
+*.prof
