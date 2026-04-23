@@ -13,11 +13,39 @@ func (c *Client) handleSubscribe(raw json.RawMessage) bool {
 
 	switch payload.Channel {
 	case ChannelPriceFeed:
-		return normalizeTickers(payload.Tickers) != nil
-	case ChannelOrderUpdates, ChannelMarketEvents:
+		tickers := normalizeTickers(payload.Tickers)
+		if tickers == nil {
+			return false
+		}
+		c.hub.Subscribe(SubscriptionRequest{
+			Client:  c,
+			Channel: ChannelPriceFeed,
+			Tickers: tickers,
+		})
+		return true
+	case ChannelOrderUpdates:
+		c.hub.Subscribe(SubscriptionRequest{
+			Client:  c,
+			Channel: ChannelOrderUpdates,
+		})
+		return true
+	case ChannelMarketEvents:
+		c.hub.Subscribe(SubscriptionRequest{
+			Client:  c,
+			Channel: ChannelMarketEvents,
+		})
 		return true
 	case ChannelOrderBook:
-		return normalizeTicker(payload.Ticker) != ""
+		ticker := normalizeTicker(payload.Ticker)
+		if ticker == "" {
+			return false
+		}
+		c.hub.Subscribe(SubscriptionRequest{
+			Client:  c,
+			Channel: ChannelOrderBook,
+			Ticker:  ticker,
+		})
+		return true
 	default:
 		return false
 	}
@@ -25,7 +53,7 @@ func (c *Client) handleSubscribe(raw json.RawMessage) bool {
 
 func normalizeTickers(tickers []string) []string {
 	normalized := make([]string, 0, len(tickers))
-	seen := make(map[string]struct{}, len(tickers))
+	seen := make(map[string]bool, len(tickers))
 
 	for _, ticker := range tickers {
 		ticker = normalizeTicker(ticker)
@@ -36,7 +64,7 @@ func normalizeTickers(tickers []string) []string {
 			continue
 		}
 
-		seen[ticker] = struct{}{}
+		seen[ticker] = true
 		normalized = append(normalized, ticker)
 	}
 
