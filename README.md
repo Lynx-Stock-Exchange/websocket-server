@@ -1,8 +1,14 @@
 # Stock Exchange WebSocket Scaffold
 
-This is an empty Go scaffold for the exchange WebSocket service described in `stock_exchange_spec.docx` and the WebSocket flow diagram.
+This is a Go websocket server scaffold for the exchange WebSocket service described in `stock_exchange_spec.docx` and the WebSocket flow diagram.
 
-For now the files contain comments only, plus package declarations, so the next step is implementation.
+The project now includes the core websocket flow:
+- gorilla websocket upgrade and connection handling
+- client and hub registration
+- read pump and write pump goroutines
+- in-memory subscription routing
+- `PLACE_ORDER` decoding, validation, and service boundary wiring
+- tests for subscriptions and order handling
 
 ## Spec anchors
 
@@ -22,11 +28,18 @@ For now the files contain comments only, plus package declarations, so the next 
 - `internal/store`: persistence boundaries for session/channel state.
 - `pkg/contracts`: exported DTO location if broker-facing contracts need to be shared later.
 
-## Next implementation pass
+## Current status
 
-1. Wire the HTTP server and `/ws` route.
-2. Implement gorilla upgrade and credential validation.
-3. Implement `Hub.Run`, client registration, unregistration, and fanout.
-4. Implement `readPump` for `SUBSCRIBE` and `PLACE_ORDER`.
-5. Implement `writePump` as the only goroutine allowed to write to the socket.
-6. Add service adapters for Admin DB, Push DB, price simulation, order book, and market events.
+Implemented:
+1. Websocket message contracts.
+2. Hub and client skeleton.
+3. Gorilla websocket handler for `/ws`.
+4. `readPump` and `writePump`.
+5. In-memory subscription routing.
+6. `PLACE_ORDER` payload validation and order-service boundary wiring.
+
+Still to do:
+1. Real auth service implementation.
+2. Real order service implementation behind the `OrderService` interface.
+3. Internal HTTP/gRPC ingress for price, order, order book, and market-event pushes.
+4. Full HTTP server wiring and runtime configuration.
