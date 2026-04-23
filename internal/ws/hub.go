@@ -35,7 +35,7 @@ func NewHub() *Hub {
 	}
 }
 
-// Run starts the hub's main loop to handle client registration and unregistration.
+// Run starts the hub's main loop to handle client registration and unregistration, subscription requests.
 func (h *Hub) Run() {
 	for {
 		select {

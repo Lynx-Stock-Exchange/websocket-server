@@ -25,13 +25,11 @@ const (
 	ChannelOrderBook    Channel = "ORDER_BOOK"
 )
 
-// writePump() will marshal this struct and send it to the client
 type Envelope struct {
 	Type    MessageType `json:"type"`
-	Payload any         `json:"payload,omitempty"` // any = interface{} (any type)
+	Payload any         `json:"payload,omitempty"`
 }
 
-// readPump() will unmarshal this into the correct struct based on Type
 type IncomingEnvelope struct {
 	Type    MessageType     `json:"type"`
 	Payload json.RawMessage `json:"payload"`
@@ -89,12 +87,14 @@ type MarketEventPayload struct {
 }
 
 type PlaceOrderPayload struct {
-	PlatformUserID string `json:"platform_user_id"`
-	InstrumentType string `json:"instrument_type"`
-	InstrumentID   string `json:"instrument_id"`
-	OrderType      string `json:"order_type"`
-	Side           string `json:"side"`
-	Quantity       int64  `json:"quantity"`
+	PlatformUserID string   `json:"platform_user_id"`
+	InstrumentType string   `json:"instrument_type"`
+	InstrumentID   string   `json:"instrument_id"`
+	OrderType      string   `json:"order_type"`
+	Side           string   `json:"side"`
+	Quantity       int64    `json:"quantity"`
+	LimitPrice     *float64 `json:"limit_price,omitempty"`
+	ExpiresAt      *string  `json:"expires_at,omitempty"`
 }
 
 type OrderAckPayload struct {

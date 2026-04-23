@@ -1,6 +1,10 @@
 package ws
 
-import "github.com/gorilla/websocket"
+import (
+	"github.com/gorilla/websocket"
+
+	"stock-exchange-ws/internal/services"
+)
 
 type ClientSubscriptions struct {
 	PriceFeedTickers map[string]bool
@@ -14,15 +18,17 @@ type Client struct {
 	conn          *websocket.Conn
 	send          chan Envelope
 	platformID    string
+	orderService  services.OrderService
 	subscriptions ClientSubscriptions
 }
 
-func newClient(hub *Hub, conn *websocket.Conn, platformID string, sendBufferSize int) *Client {
+func newClient(hub *Hub, conn *websocket.Conn, platformID string, orderService services.OrderService, sendBufferSize int) *Client {
 	return &Client{
-		hub:        hub,
-		conn:       conn,
-		send:       make(chan Envelope, sendBufferSize),
-		platformID: platformID,
+		hub:          hub,
+		conn:         conn,
+		send:         make(chan Envelope, sendBufferSize),
+		platformID:   platformID,
+		orderService: orderService,
 		subscriptions: ClientSubscriptions{
 			PriceFeedTickers: make(map[string]bool),
 			OrderBookTickers: make(map[string]bool),

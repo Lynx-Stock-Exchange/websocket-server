@@ -1,9 +1,12 @@
 package ws
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"strings"
+
+	"stock-exchange-ws/internal/services"
 )
 
 func (c *Client) handlePlaceOrder(raw json.RawMessage) bool {
@@ -21,10 +24,36 @@ func (c *Client) handlePlaceOrder(raw json.RawMessage) bool {
 		return true
 	}
 
-	// TODO: Hand off to the order service and enqueue ORDER_ACK or ORDER_REJECTED with the result.
-	c.send <- NewEnvelope(MessageOrderRejected, OrderRejectedPayload{
-		Code:    "ORDER_SERVICE_UNAVAILABLE",
-		Message: "order placement service is not wired yet",
+	if c.orderService == nil {
+		c.send <- NewEnvelope(MessageOrderRejected, OrderRejectedPayload{
+			Code:    "ORDER_SERVICE_UNAVAILABLE",
+			Message: "order placement service is not wired yet",
+		})
+		return true
+	}
+
+	resp, err := c.orderService.PlaceOrder(context.Background(), services.PlaceOrderRequest{
+		PlatformID:     c.platformID,
+		PlatformUserID: payload.PlatformUserID,
+		InstrumentType: payload.InstrumentType,
+		InstrumentID:   payload.InstrumentID,
+		OrderType:      payload.OrderType,
+		Side:           payload.Side,
+		Quantity:       payload.Quantity,
+		LimitPrice:     payload.LimitPrice,
+		ExpiresAt:      payload.ExpiresAt,
+	})
+	if err != nil {
+		c.send <- NewEnvelope(MessageOrderRejected, OrderRejectedPayload{
+			Code:    rejectionCode(err),
+			Message: err.Error(),
+		})
+		return true
+	}
+
+	c.send <- NewEnvelope(MessageOrderAck, OrderAckPayload{
+		OrderID: resp.OrderID,
+		Status:  resp.Status,
 	})
 	return true
 }
@@ -35,6 +64,14 @@ func normalizePlaceOrder(payload *PlaceOrderPayload) {
 	payload.InstrumentID = strings.ToUpper(strings.TrimSpace(payload.InstrumentID))
 	payload.OrderType = strings.ToUpper(strings.TrimSpace(payload.OrderType))
 	payload.Side = strings.ToUpper(strings.TrimSpace(payload.Side))
+	if payload.ExpiresAt != nil {
+		trimmed := strings.TrimSpace(*payload.ExpiresAt)
+		if trimmed == "" {
+			payload.ExpiresAt = nil
+		} else {
+			payload.ExpiresAt = &trimmed
+		}
+	}
 }
 
 func validatePlaceOrder(payload PlaceOrderPayload) error {
@@ -51,7 +88,24 @@ func validatePlaceOrder(payload PlaceOrderPayload) error {
 		return errors.New("side is required")
 	case payload.Quantity <= 0:
 		return errors.New("quantity must be greater than 0")
+	case payload.OrderType == "LIMIT" && payload.LimitPrice == nil:
+		return errors.New("limit_price is required for LIMIT orders")
+	case payload.OrderType == "LIMIT" && payload.LimitPrice != nil && *payload.LimitPrice <= 0:
+		return errors.New("limit_price must be greater than 0")
 	default:
 		return nil
 	}
+}
+
+type rejectionCoder interface {
+	RejectionCode() string
+}
+
+func rejectionCode(err error) string {
+	var coder rejectionCoder
+	if errors.As(err, &coder) {
+		return coder.RejectionCode()
+	}
+
+	return "ORDER_REJECTED"
 }

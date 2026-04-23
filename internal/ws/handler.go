@@ -6,6 +6,8 @@ import (
 	"time"
 
 	"github.com/gorilla/websocket"
+
+	"stock-exchange-ws/internal/services"
 )
 
 const defaultSendBufferSize = 256
@@ -17,22 +19,33 @@ type MarketTimeProvider interface {
 type Handler struct {
 	hub                *Hub
 	authenticator      Authenticator
+	orderService       services.OrderService
 	marketTimeProvider MarketTimeProvider
 	upgrader           websocket.Upgrader
 	sendBufferSize     int
 }
 
-func NewHandler(config Handler) *Handler {
-	if config.sendBufferSize == 0 {
-		config.sendBufferSize = defaultSendBufferSize
+type HandlerConfig struct {
+	Hub                *Hub
+	Authenticator      Authenticator
+	OrderService       services.OrderService
+	MarketTimeProvider MarketTimeProvider
+	Upgrader           websocket.Upgrader
+	SendBufferSize     int
+}
+
+func NewHandler(config HandlerConfig) *Handler {
+	if config.SendBufferSize == 0 {
+		config.SendBufferSize = defaultSendBufferSize
 	}
 
 	return &Handler{
-		hub:                config.hub,
-		authenticator:      config.authenticator,
-		marketTimeProvider: config.marketTimeProvider,
-		upgrader:           config.upgrader,
-		sendBufferSize:     config.sendBufferSize,
+		hub:                config.Hub,
+		authenticator:      config.Authenticator,
+		orderService:       config.OrderService,
+		marketTimeProvider: config.MarketTimeProvider,
+		upgrader:           config.Upgrader,
+		sendBufferSize:     config.SendBufferSize,
 	}
 }
 
@@ -70,13 +83,12 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Upgrade the HTTP connection to a WebSocket connection
 	conn, err := h.upgrader.Upgrade(w, r, nil)
 	if err != nil {
 		return
 	}
 
-	client := newClient(h.hub, conn, platform.ID, h.sendBufferSize)
+	client := newClient(h.hub, conn, platform.ID, h.orderService, h.sendBufferSize)
 	h.hub.Register(client)
 
 	go client.writePump()
