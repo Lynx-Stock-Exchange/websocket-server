@@ -1,6 +1,9 @@
 package ws
 
-import "log"
+import (
+	"fmt"
+	"log"
+)
 
 type SubscriptionRequest struct {
 	Client  *Client
@@ -42,6 +45,7 @@ func (h *Hub) Run() {
 		case client := <-h.register:
 			h.clients[client] = true
 			log.Println("Client registered. Client: ", client.conn.RemoteAddr(), " PlatformID: ", client.platformID)
+			fmt.Println("Client registered. Client: ", client.conn.RemoteAddr(), " PlatformID: ", client.platformID)
 		case client := <-h.unregister:
 			if !h.clients[client] {
 				continue

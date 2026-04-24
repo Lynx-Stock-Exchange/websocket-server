@@ -2,6 +2,7 @@ package ws
 
 import (
 	"errors"
+	"log"
 	"net/http"
 	"time"
 
@@ -34,6 +35,7 @@ type HandlerConfig struct {
 	SendBufferSize     int
 }
 
+// Websocket main handler - responsible for handling incoming websocket connections, authenticating clients, and registering them with the hub.
 func NewHandler(config HandlerConfig) *Handler {
 	if config.SendBufferSize == 0 {
 		config.SendBufferSize = defaultSendBufferSize
@@ -90,6 +92,8 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 	client := newClient(h.hub, conn, platform.ID, h.orderService, h.sendBufferSize)
 	h.hub.Register(client)
+
+	log.Printf("🔗 Client connected - Platform: %s, Remote: %s\n", platform.ID, conn.RemoteAddr())
 
 	go client.writePump()
 	client.send <- NewEnvelope(MessageConnected, ConnectedPayload{

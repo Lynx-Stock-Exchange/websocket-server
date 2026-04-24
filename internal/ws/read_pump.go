@@ -1,6 +1,9 @@
 package ws
 
-import "time"
+import (
+	"log"
+	"time"
+)
 
 const (
 	maxMessageSize = 5120
@@ -24,6 +27,8 @@ func (c *Client) readPump() {
 		if err := c.conn.ReadJSON(&envelope); err != nil {
 			return
 		}
+
+		log.Printf(" Received from %s: %v\n", c.platformID, envelope.Type)
 
 		switch envelope.Type {
 		case MessageSubscribe:
