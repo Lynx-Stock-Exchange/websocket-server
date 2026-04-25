@@ -2,9 +2,11 @@ package ws
 
 import (
 	"encoding/json"
+	"log"
 	"strings"
 )
 
+// handleSubscribe processes subscription requests from the client
 func (c *Client) handleSubscribe(raw json.RawMessage) bool {
 	var payload SubscribePayload
 	if err := json.Unmarshal(raw, &payload); err != nil {
@@ -12,7 +14,10 @@ func (c *Client) handleSubscribe(raw json.RawMessage) bool {
 	}
 
 	switch payload.Channel {
+
+	// PRICE_FEED
 	case ChannelPriceFeed:
+		// If no tickers specified
 		tickers := normalizeTickers(payload.Tickers)
 		if tickers == nil {
 			return false
@@ -22,7 +27,10 @@ func (c *Client) handleSubscribe(raw json.RawMessage) bool {
 			Channel: ChannelPriceFeed,
 			Tickers: tickers,
 		})
+		log.Println("Subscribed to price feed for tickers: ", tickers)
 		return true
+
+	// ORDER_UPDATES
 	case ChannelOrderUpdates:
 		c.hub.Subscribe(SubscriptionRequest{
 			Client:  c,
