@@ -1,7 +1,6 @@
 package ws
 
 import (
-	"fmt"
 	"log"
 )
 
@@ -13,11 +12,13 @@ type SubscriptionRequest struct {
 }
 
 type Hub struct {
-	register                chan *Client
-	unregister              chan *Client
-	subscribe               chan SubscriptionRequest
-	priceUpdates            chan PriceUpdatePayload
-	clients                 map[*Client]bool
+	register     chan *Client
+	unregister   chan *Client
+	subscribe    chan SubscriptionRequest
+	priceUpdates chan PriceUpdatePayload
+	clients      map[*Client]bool
+
+	// Stores all active clients and their subscriptions
 	priceFeedByTicker       map[string]map[*Client]bool
 	orderBookByTicker       map[string]map[*Client]bool
 	orderUpdatesByPlatform  map[string]map[*Client]bool
@@ -45,7 +46,6 @@ func (h *Hub) Run() {
 		case client := <-h.register:
 			h.clients[client] = true
 			log.Println("Client registered. Client: ", client.conn.RemoteAddr(), " PlatformID: ", client.platformID)
-			fmt.Println("Client registered. Client: ", client.conn.RemoteAddr(), " PlatformID: ", client.platformID)
 		case client := <-h.unregister:
 			if !h.clients[client] {
 				continue
@@ -57,6 +57,8 @@ func (h *Hub) Run() {
 			log.Println("Client unregistered. Client: ", client.conn.RemoteAddr(), " PlatformID: ", client.platformID)
 		case req := <-h.subscribe:
 			h.applySubscription(req)
+
+		// Broadcast price updates to subscribed clients
 		case payload := <-h.priceUpdates:
 			for client := range h.priceFeedByTicker[payload.Ticker] {
 				client.send <- NewEnvelope(MessagePriceUpdate, payload)
@@ -71,6 +73,7 @@ func (h *Hub) Register(client *Client) {
 
 func (h *Hub) Unregister(client *Client) {
 	h.unregister <- client
+
 }
 
 func (h *Hub) Subscribe(req SubscriptionRequest) {
@@ -91,6 +94,7 @@ func (h *Hub) applySubscription(req SubscriptionRequest) {
 			}
 			h.priceFeedByTicker[ticker][req.Client] = true
 			req.Client.subscriptions.PriceFeedTickers[ticker] = true
+			log.Printf("Client %s subscribed to price feed for ticker: %s\n", req.Client.PlatformID(), ticker)
 		}
 
 	case ChannelOrderBook:

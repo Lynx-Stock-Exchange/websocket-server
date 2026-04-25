@@ -93,7 +93,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	client := newClient(h.hub, conn, platform.ID, h.orderService, h.sendBufferSize)
 	h.hub.Register(client)
 
-	log.Printf("🔗 Client connected - Platform: %s, Remote: %s\n", platform.ID, conn.RemoteAddr())
+	log.Printf("Client connected - Platform: %s, Remote: %s\n", platform.ID, conn.RemoteAddr())
 
 	go client.writePump()
 	client.send <- NewEnvelope(MessageConnected, ConnectedPayload{

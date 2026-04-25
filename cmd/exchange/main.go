@@ -77,7 +77,7 @@ func main() {
 	mux.Handle("/ws", handler)
 
 	// Start price feed simulator - only test purpose, will be replaced with real data feed logic
-	go simulatePriceFeed(hub)
+	// go simulatePriceFeed(hub)
 
 	// Start HTTP server
 	listenAddr := ":8080"
@@ -107,31 +107,4 @@ func main() {
 		log.Fatalf("Server shutdown error: %v\n", err)
 	}
 	log.Println("✓ Server stopped")
-}
-
-// Simulate price feed - publishes price updates every 3 seconds
-func simulatePriceFeed(hub *ws.Hub) {
-	ticker := time.NewTicker(3 * time.Second)
-	defer ticker.Stop()
-
-	prices := map[string]float64{
-		"AAPL": 150.25,
-		"MSFT": 320.50,
-	}
-
-	for range ticker.C {
-		for ticker := range prices {
-			prices[ticker] += 0.5 // Fake price change
-			payload := ws.PriceUpdatePayload{
-				Ticker:     ticker,
-				Price:      prices[ticker],
-				Change:     0.5,
-				ChangePct:  0.33,
-				Volume:     1000000,
-				MarketTime: time.Now().Format(time.RFC3339),
-			}
-			log.Printf("Publishing price update: %s = $%.2f\n", ticker, prices[ticker])
-			hub.PublishPriceUpdate(payload)
-		}
-	}
 }
