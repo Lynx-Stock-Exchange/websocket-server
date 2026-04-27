@@ -1,45 +1,19 @@
 package main
 
 import (
+	"bytes"
+	"encoding/json"
 	"log"
+	"net/http"
 	"net/url"
-	"stock-exchange-ws/internal/ws"
 	"time"
 
 	"github.com/gorilla/websocket"
+
+	"stock-exchange-ws/internal/ws"
 )
-
-type MessageType string
-
-const (
-	MessageSubscribe   MessageType = "SUBSCRIBE"
-	MessagePlaceOrder  MessageType = "PLACE_ORDER"
-	MessagePriceUpdate MessageType = "PRICE_UPDATE"
-	MessageConnected   MessageType = "CONNECTED"
-	MessageOrderAck    MessageType = "ORDER_ACK"
-)
-
-type Channel string
-
-const (
-	ChannelPriceFeed    Channel = "PRICE_FEED"
-	ChannelOrderUpdates Channel = "ORDER_UPDATES"
-	ChannelOrderBook    Channel = "ORDER_BOOK"
-)
-
-type Envelope struct {
-	Type    MessageType `json:"type"`
-	Payload interface{} `json:"payload,omitempty"`
-}
-
-type SubscribePayload struct {
-	Channel Channel  `json:"channel"`
-	Tickers []string `json:"tickers,omitempty"`
-	Ticker  string   `json:"ticker,omitempty"`
-}
 
 func main() {
-	// Build WebSocket URL with fake credentials
 	u := url.URL{
 		Scheme:   "ws",
 		Host:     "localhost:8080",
@@ -49,30 +23,48 @@ func main() {
 
 	log.Printf("Connecting to %s\n", u.String())
 
-	// Connect to server
 	conn, _, err := websocket.DefaultDialer.Dial(u.String(), nil)
 	if err != nil {
-		log.Fatal("X Connection failed:", err)
+		log.Fatal("connection failed:", err)
 	}
 	defer conn.Close()
 
-	log.Println("✓ Connected to server")
-
-	// Read CONNECTED message
-	var msg Envelope
-	err = conn.ReadJSON(&msg)
-	if err != nil {
-		log.Fatal("X Failed to read CONNECTED message:", err)
+	var connected ws.Envelope
+	if err := conn.ReadJSON(&connected); err != nil {
+		log.Fatal("failed to read CONNECTED message:", err)
 	}
-	log.Printf("✓ Received: %+v\n", msg)
+	log.Printf("Received: %+v\n", connected)
 
-	go simulatePriceFeed(conn)
+	subscribe := ws.Envelope{
+		Type: ws.MessageSubscribe,
+		Payload: ws.SubscribePayload{
+			Channel: ws.ChannelPriceFeed,
+			Tickers: []string{"AAPL", "MSFT"},
+		},
+	}
+	if err := conn.WriteJSON(subscribe); err != nil {
+		log.Fatal("failed to send subscription:", err)
+	}
+	log.Println("Subscription sent")
 
-	time.Sleep(30 * time.Second)
-
+	go postFakePriceFeed()
+	readMessages(conn)
 }
 
-func simulatePriceFeed(conn *websocket.Conn) {
+func readMessages(conn *websocket.Conn) {
+	for {
+		var response ws.Envelope
+		if err := conn.ReadJSON(&response); err != nil {
+			log.Println("connection closed or read error:", err)
+			return
+		}
+
+		data, _ := json.MarshalIndent(response, "", "  ")
+		log.Printf("Received websocket message:\n%s\n", string(data))
+	}
+}
+
+func postFakePriceFeed() {
 	ticker := time.NewTicker(3 * time.Second)
 	defer ticker.Stop()
 
@@ -92,18 +84,23 @@ func simulatePriceFeed(conn *websocket.Conn) {
 				Volume:     1000000,
 				MarketTime: time.Now().Format(time.RFC3339),
 			}
-			log.Printf("Publishing price update: %s = $%.2f\n", symbol, prices[symbol])
 
-			// Send as an Envelope with PRICE_UPDATE type
-			envelope := Envelope{
-				Type:    MessagePriceUpdate,
-				Payload: payload,
-			}
-			err := conn.WriteJSON(envelope)
+			body, err := json.Marshal(payload)
 			if err != nil {
-				log.Fatal("X Failed to send price update:", err)
+				log.Fatal("failed to encode price update:", err)
 			}
-			log.Println("✓ Price update sent")
+
+			resp, err := http.Post("http://localhost:8080/internal/push/price-update", "application/json", bytes.NewReader(body))
+			if err != nil {
+				log.Fatal("failed to post price update:", err)
+			}
+			_ = resp.Body.Close()
+
+			if resp.StatusCode != http.StatusAccepted {
+				log.Fatalf("price update rejected with status: %s", resp.Status)
+			}
+
+			log.Printf("Posted price update: %s = %.2f\n", symbol, prices[symbol])
 		}
 	}
 }

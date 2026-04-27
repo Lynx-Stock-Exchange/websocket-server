@@ -39,11 +39,6 @@ func (c *Client) readPump() {
 			if !c.handleSubscribe(envelope.Payload) {
 				return
 			}
-		// Price update from Price Sim API Microservice
-		case MessagePriceUpdate:
-			if !c.handlePriceUpdate(envelope.Payload) {
-				return
-			}
 
 		case MessagePlaceOrder:
 			if !c.handlePlaceOrder(envelope.Payload) {

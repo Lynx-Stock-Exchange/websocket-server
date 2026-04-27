@@ -9,6 +9,7 @@ import (
 	"syscall"
 	"time"
 
+	"stock-exchange-ws/internal/httpserver"
 	"stock-exchange-ws/internal/services"
 	"stock-exchange-ws/internal/ws"
 
@@ -75,6 +76,7 @@ func main() {
 	// Setup HTTP routes
 	mux := http.NewServeMux()
 	mux.Handle("/ws", handler)
+	httpserver.NewInternalPushHandler(hub).RegisterRoutes(mux)
 
 	// Start price feed simulator - only test purpose, will be replaced with real data feed logic
 	// go simulatePriceFeed(hub)
@@ -88,6 +90,7 @@ func main() {
 
 	go func() {
 		log.Printf("Starting WebSocket server on ws://localhost:8080/ws\n\n")
+		log.Printf("Internal price update endpoint: http://localhost:8080/internal/push/price-update\n\n")
 		log.Printf("Test credentials: api_key=test-api-key, api_secret=test-api-secret\n\n")
 		if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 			log.Fatalf("Server error: %v\n", err)
