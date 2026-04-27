@@ -1,0 +1,21 @@
+version: '3.9'
+
+services:
+  exchange-server:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: stock-exchange-ws
+    ports:
+      - "8080:8080"
+    environment:
+      # Configuration - override these at runtime
+      - LISTEN_ADDR=:8080
+      - LOG_LEVEL=info
+    restart: unless-stopped
+    networks:
+      - exchange-network
+
+networks:
+  exchange-network:
+    driver: bridge

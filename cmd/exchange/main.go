@@ -75,11 +75,9 @@ func main() {
 
 	// Setup HTTP routes
 	mux := http.NewServeMux()
+
 	mux.Handle("/ws", handler)
 	httpserver.NewInternalPushHandler(hub).RegisterRoutes(mux)
-
-	// Start price feed simulator - only test purpose, will be replaced with real data feed logic
-	// go simulatePriceFeed(hub)
 
 	// Start HTTP server
 	listenAddr := ":8080"
