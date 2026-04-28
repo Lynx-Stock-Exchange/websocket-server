@@ -88,7 +88,11 @@ func main() {
 
 	go func() {
 		log.Printf("Starting WebSocket server on ws://localhost:8080/ws\n\n")
-		log.Printf("Internal price update endpoint: http://localhost:8080/internal/push/price-update\n\n")
+		log.Printf("Internal push endpoints:\n")
+		log.Printf("  POST http://localhost:8080/internal/push/price-update\n")
+		log.Printf("  POST http://localhost:8080/internal/push/order-update\n")
+		log.Printf("  POST http://localhost:8080/internal/push/order-book-update\n")
+		log.Printf("  POST http://localhost:8080/internal/push/market-event\n\n")
 		log.Printf("Test credentials: api_key=test-api-key, api_secret=test-api-secret\n\n")
 		if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 			log.Fatalf("Server error: %v\n", err)

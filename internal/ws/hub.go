@@ -4,6 +4,11 @@ import (
 	"log"
 )
 
+type orderUpdatePublication struct {
+	platformID string
+	payload    OrderUpdatePayload
+}
+
 type SubscriptionRequest struct {
 	Client  *Client
 	Channel Channel
@@ -16,6 +21,9 @@ type Hub struct {
 	unregister   chan *Client
 	subscribe    chan SubscriptionRequest
 	priceUpdates chan PriceUpdatePayload
+	orderUpdates chan orderUpdatePublication
+	orderBooks   chan OrderBookUpdatePayload
+	marketEvents chan MarketEventPayload
 	clients      map[*Client]bool
 
 	// Stores all active clients and their subscriptions
@@ -31,6 +39,9 @@ func NewHub() *Hub {
 		unregister:              make(chan *Client),
 		subscribe:               make(chan SubscriptionRequest),
 		priceUpdates:            make(chan PriceUpdatePayload),
+		orderUpdates:            make(chan orderUpdatePublication),
+		orderBooks:              make(chan OrderBookUpdatePayload),
+		marketEvents:            make(chan MarketEventPayload),
 		clients:                 make(map[*Client]bool),
 		priceFeedByTicker:       make(map[string]map[*Client]bool),
 		orderBookByTicker:       make(map[string]map[*Client]bool),
@@ -45,23 +56,31 @@ func (h *Hub) Run() {
 		select {
 		case client := <-h.register:
 			h.clients[client] = true
-			log.Println("Client registered. Client: ", client.conn.RemoteAddr(), " PlatformID: ", client.platformID)
+			log.Println("Client registered. Client: ", client.remoteAddr(), " PlatformID: ", client.platformID)
 		case client := <-h.unregister:
-			if !h.clients[client] {
-				continue
-			}
-
-			delete(h.clients, client)
-			h.removeClientSubscriptions(client)
-			close(client.send)
-			log.Println("Client unregistered. Client: ", client.conn.RemoteAddr(), " PlatformID: ", client.platformID)
+			h.unregisterClient(client)
 		case req := <-h.subscribe:
 			h.applySubscription(req)
 
 		// Broadcast price updates to subscribed clients
 		case payload := <-h.priceUpdates:
 			for client := range h.priceFeedByTicker[payload.Ticker] {
-				client.send <- NewEnvelope(MessagePriceUpdate, payload)
+				h.enqueue(client, NewEnvelope(MessagePriceUpdate, payload))
+			}
+
+		case update := <-h.orderUpdates:
+			for client := range h.orderUpdatesByPlatform[update.platformID] {
+				h.enqueue(client, NewEnvelope(MessageOrderUpdate, update.payload))
+			}
+
+		case payload := <-h.orderBooks:
+			for client := range h.orderBookByTicker[payload.Ticker] {
+				h.enqueue(client, NewEnvelope(MessageOrderBookUpdate, payload))
+			}
+
+		case payload := <-h.marketEvents:
+			for client := range h.marketEventsSubscribers {
+				h.enqueue(client, NewEnvelope(MessageMarketEvent, payload))
 			}
 		}
 	}
@@ -82,6 +101,21 @@ func (h *Hub) Subscribe(req SubscriptionRequest) {
 
 func (h *Hub) PublishPriceUpdate(payload PriceUpdatePayload) {
 	h.priceUpdates <- payload
+}
+
+func (h *Hub) PublishOrderUpdate(platformID string, payload OrderUpdatePayload) {
+	h.orderUpdates <- orderUpdatePublication{
+		platformID: platformID,
+		payload:    payload,
+	}
+}
+
+func (h *Hub) PublishOrderBookUpdate(payload OrderBookUpdatePayload) {
+	h.orderBooks <- payload
+}
+
+func (h *Hub) PublishMarketEvent(payload MarketEventPayload) {
+	h.marketEvents <- payload
 }
 
 func (h *Hub) applySubscription(req SubscriptionRequest) {
@@ -115,6 +149,25 @@ func (h *Hub) applySubscription(req SubscriptionRequest) {
 		h.marketEventsSubscribers[req.Client] = true
 		req.Client.subscriptions.MarketEvents = true
 	}
+}
+
+func (h *Hub) enqueue(client *Client, envelope Envelope) {
+	select {
+	case client.send <- envelope:
+	default:
+		h.unregisterClient(client)
+	}
+}
+
+func (h *Hub) unregisterClient(client *Client) {
+	if !h.clients[client] {
+		return
+	}
+
+	delete(h.clients, client)
+	h.removeClientSubscriptions(client)
+	close(client.send)
+	log.Println("Client unregistered. Client: ", client.remoteAddr(), " PlatformID: ", client.platformID)
 }
 
 func (h *Hub) removeClientSubscriptions(client *Client) {
