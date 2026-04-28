@@ -1,6 +1,8 @@
 package ws
 
 import (
+	"net"
+
 	"github.com/gorilla/websocket"
 
 	"stock-exchange-ws/internal/services"
@@ -38,4 +40,12 @@ func newClient(hub *Hub, conn *websocket.Conn, platformID string, orderService s
 
 func (c *Client) PlatformID() string {
 	return c.platformID
+}
+
+func (c *Client) remoteAddr() net.Addr {
+	if c.conn == nil {
+		return nil
+	}
+
+	return c.conn.RemoteAddr()
 }
