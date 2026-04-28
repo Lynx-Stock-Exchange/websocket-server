@@ -6,39 +6,24 @@ import (
 	"net/url"
 
 	"github.com/gorilla/websocket"
+
+	"stock-exchange-ws/internal/ws"
 )
-
-type MessageType string
-
-const (
-	MessageSubscribe   MessageType = "SUBSCRIBE"
-	MessagePlaceOrder  MessageType = "PLACE_ORDER"
-	MessagePriceUpdate MessageType = "PRICE_UPDATE"
-	MessageConnected   MessageType = "CONNECTED"
-	MessageOrderAck    MessageType = "ORDER_ACK"
-)
-
-type Channel string
-
-const (
-	ChannelPriceFeed    Channel = "PRICE_FEED"
-	ChannelOrderUpdates Channel = "ORDER_UPDATES"
-	ChannelOrderBook    Channel = "ORDER_BOOK"
-)
-
-type Envelope struct {
-	Type    MessageType `json:"type"`
-	Payload interface{} `json:"payload,omitempty"`
-}
-
-type SubscribePayload struct {
-	Channel Channel  `json:"channel"`
-	Tickers []string `json:"tickers,omitempty"`
-	Ticker  string   `json:"ticker,omitempty"`
-}
 
 func main() {
-	// Build WebSocket URL with fake credentials
+	conn := connect()
+	defer conn.Close()
+
+	readConnected(conn)
+	subscribe(conn, ws.SubscribePayload{
+		Channel: ws.ChannelOrderUpdates,
+	})
+	log.Println("Subscribed to ORDER_UPDATES")
+
+	printIncoming(conn)
+}
+
+func connect() *websocket.Conn {
 	u := url.URL{
 		Scheme:   "ws",
 		Host:     "localhost:8080",
@@ -46,96 +31,48 @@ func main() {
 		RawQuery: "api_key=test-api-key&api_secret=test-api-secret",
 	}
 
-	log.Printf("Connecting to %s\n", u.String())
-
-	// Connect to server
+	log.Printf("Connecting to %s", u.String())
 	conn, _, err := websocket.DefaultDialer.Dial(u.String(), nil)
 	if err != nil {
-		log.Fatal("X Connection failed:", err)
+		log.Fatal("connection failed:", err)
 	}
-	defer conn.Close()
 
-	log.Println("✓ Connected to server")
+	return conn
+}
 
-	// Read CONNECTED message
-	var msg Envelope
-	err = conn.ReadJSON(&msg)
-	if err != nil {
-		log.Fatal("X Failed to read CONNECTED message:", err)
+func readConnected(conn *websocket.Conn) {
+	var msg ws.Envelope
+	if err := conn.ReadJSON(&msg); err != nil {
+		log.Fatal("failed to read CONNECTED message:", err)
 	}
-	log.Printf("✓ Received: %+v\n", msg)
-	///
-	///
-	///
 
-	// Test 2: Subscribe to ORDER_UPDATES
-	log.Println("\n\n Subscribing to ORDER_UPDATES...")
-	orderUpdateMsg := Envelope{
-		Type: MessageSubscribe,
-		Payload: SubscribePayload{
-			Channel: ChannelOrderUpdates,
-		},
-	}
-	err = conn.WriteJSON(orderUpdateMsg)
-	if err != nil {
-		log.Fatal("X Failed to subscribe to order updates:", err)
-	}
-	log.Println("✓ Order updates subscription sent")
+	printEnvelope("Received", msg)
+}
 
-	// Read Order updates response
+func subscribe(conn *websocket.Conn, payload ws.SubscribePayload) {
+	if err := conn.WriteJSON(ws.NewEnvelope(ws.MessageSubscribe, payload)); err != nil {
+		log.Fatal("failed to send subscribe:", err)
+	}
+}
+
+func printIncoming(conn *websocket.Conn) {
 	for {
-		var response2 Envelope
-		err = conn.ReadJSON(&response2)
-		if err != nil {
-			log.Println("X Connection closed or error:", err)
+		var msg ws.Envelope
+		if err := conn.ReadJSON(&msg); err != nil {
+			log.Println("connection closed or read failed:", err)
 			return
 		}
-		data2, _ := json.MarshalIndent(response2, "", "  ")
-		log.Printf("Received message:\n%s\n", string(data2))
 
+		printEnvelope("Received", msg)
+	}
+}
+
+func printEnvelope(prefix string, msg ws.Envelope) {
+	data, err := json.MarshalIndent(msg, "", "  ")
+	if err != nil {
+		log.Printf("%s: %#v", prefix, msg)
+		return
 	}
 
-	// ////
-	// ////
-	// ////
-	// ////
-
-	// // Test 3: Place an order
-	// log.Println("\n\nPlacing test order...")
-	// orderPayload := map[string]interface{}{
-	// 	"platform_user_id": "user-456",
-	// 	"instrument_type":  "EQUITY",
-	// 	"instrument_id":    "AAPL",
-	// 	"order_type":       "LIMIT",
-	// 	"side":             "BUY",
-	// 	"quantity":         100,
-	// 	"limit_price":      150.50,
-	// }
-	// placeOrderMsg := Envelope{
-	// 	Type:    MessagePlaceOrder,
-	// 	Payload: orderPayload,
-	// }
-	// err = conn.WriteJSON(placeOrderMsg)
-	// if err != nil {
-	// 	log.Fatal("X Failed to place order:", err)
-	// }
-	// log.Println("✓ Order placed")
-
-	// // Read place order response
-	// var response3 Envelope
-	// err = conn.ReadJSON(&response3)
-	// if err != nil {
-	// 	log.Println("X Connection closed or error:", err)
-	// 	return
-	// }
-	// data3, _ := json.MarshalIndent(response3, "", "  ")
-	// log.Printf("\nReceived message:\n%s\n", string(data3))
-
-	// ////
-	// ////
-	// ////
-	// ////
-
-	// log.Println("\n✓ Test completed")
-
+	log.Printf("%s:\n%s", prefix, string(data))
 }

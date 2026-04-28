@@ -9,6 +9,11 @@ type orderUpdatePublication struct {
 	payload    OrderUpdatePayload
 }
 
+type ClientMessage struct {
+	Client   *Client
+	Envelope Envelope
+}
+
 type SubscriptionRequest struct {
 	Client  *Client
 	Channel Channel
@@ -17,14 +22,15 @@ type SubscriptionRequest struct {
 }
 
 type Hub struct {
-	register     chan *Client
-	unregister   chan *Client
-	subscribe    chan SubscriptionRequest
-	priceUpdates chan PriceUpdatePayload
-	orderUpdates chan orderUpdatePublication
-	orderBooks   chan OrderBookUpdatePayload
-	marketEvents chan MarketEventPayload
-	clients      map[*Client]bool
+	register       chan *Client
+	unregister     chan *Client
+	subscribe      chan SubscriptionRequest
+	clientMessages chan ClientMessage
+	priceUpdates   chan PriceUpdatePayload
+	orderUpdates   chan orderUpdatePublication
+	orderBooks     chan OrderBookUpdatePayload
+	marketEvents   chan MarketEventPayload
+	clients        map[*Client]bool
 
 	// Stores all active clients and their subscriptions
 	priceFeedByTicker       map[string]map[*Client]bool
@@ -38,6 +44,7 @@ func NewHub() *Hub {
 		register:                make(chan *Client),
 		unregister:              make(chan *Client),
 		subscribe:               make(chan SubscriptionRequest),
+		clientMessages:          make(chan ClientMessage),
 		priceUpdates:            make(chan PriceUpdatePayload),
 		orderUpdates:            make(chan orderUpdatePublication),
 		orderBooks:              make(chan OrderBookUpdatePayload),
@@ -61,6 +68,10 @@ func (h *Hub) Run() {
 			h.unregisterClient(client)
 		case req := <-h.subscribe:
 			h.applySubscription(req)
+		case message := <-h.clientMessages:
+			if h.clients[message.Client] {
+				h.enqueue(message.Client, message.Envelope)
+			}
 
 		// Broadcast price updates to subscribed clients
 		case payload := <-h.priceUpdates:
@@ -97,6 +108,13 @@ func (h *Hub) Unregister(client *Client) {
 
 func (h *Hub) Subscribe(req SubscriptionRequest) {
 	h.subscribe <- req
+}
+
+func (h *Hub) Send(client *Client, envelope Envelope) {
+	h.clientMessages <- ClientMessage{
+		Client:   client,
+		Envelope: envelope,
+	}
 }
 
 func (h *Hub) PublishPriceUpdate(payload PriceUpdatePayload) {
