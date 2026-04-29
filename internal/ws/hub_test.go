@@ -73,6 +73,34 @@ func TestPublishMarketEventRoutesToAllSubscribers(t *testing.T) {
 	}
 }
 
+func TestHubSendDeliversToRegisteredClient(t *testing.T) {
+	hub := NewHub()
+	go hub.Run()
+
+	client := newClient(hub, nil, "platform-a", nil, 1)
+	hub.Register(client)
+	hub.Send(client, NewEnvelope(MessageConnected, ConnectedPayload{
+		PlatformID: "platform-a",
+	}))
+
+	msg := readEnvelope(t, client.send)
+	if msg.Type != MessageConnected {
+		t.Fatalf("message type = %q, want %q", msg.Type, MessageConnected)
+	}
+}
+
+func TestHubSendIgnoresUnregisteredClient(t *testing.T) {
+	hub := NewHub()
+	go hub.Run()
+
+	client := newClient(hub, nil, "platform-a", nil, 1)
+	hub.Send(client, NewEnvelope(MessageConnected, ConnectedPayload{
+		PlatformID: "platform-a",
+	}))
+
+	assertNoEnvelope(t, client.send)
+}
+
 func TestEnqueueRemovesClientWhenSendBufferIsFull(t *testing.T) {
 	hub := NewHub()
 	client := newClient(hub, nil, "platform-a", nil, 1)

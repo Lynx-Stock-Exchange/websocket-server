@@ -258,7 +258,7 @@ POST http://localhost:8080/internal/push/price-update
 Content-Type: application/json
 ```
 
-Request body:
+Your service seeds this JSON via `HTTP POST` request
 
 ```json
 {
@@ -279,14 +279,117 @@ Responses:
 | `400 Bad Request` | Missing ticker or malformed JSON |
 | `500 Internal Server Error` | Hub not initialised |
 
-**For a working implementation of this, see [`cmd/tests/test.go`](cmd/tests/..).** [`cmd/client/..`](cmd/tests/test.go) to see a working implementation 
-of the services
+---
+
+## Pushing Order Updates (Internal Services)
+
+Internal services — such as an order matching engine — push order status changes to the server via HTTP. The server then delivers them to all WebSocket clients of that platform subscribed to `ORDER_UPDATES`.
+
+```
+POST http://localhost:8080/internal/push/order-update
+Content-Type: application/json
+```
+
+Your service seeds this JSON via `HTTP POST` request
+
+```json
+{
+  "platform_id": "platform-xyz",
+  "order_id": "ord-123",
+  "status": "FILLED",
+  "filled_quantity": 10,
+  "average_fill_price": 150.75,
+  "exchange_fee": 0.15,
+  "market_time": "2026-04-27T15:30:00Z"
+}
+```
+
+Responses:
+
+| Status | Meaning |
+|---|---|
+| `202 Accepted` | Update received and queued for delivery |
+| `400 Bad Request` | Missing `platform_id` or malformed JSON |
+| `500 Internal Server Error` | Hub not initialised |
+
+---
+
+## Pushing Order Book Updates (Internal Services)
+
+Internal services — such as a matching engine or book aggregator — push order book snapshots to the server via HTTP. The server then broadcasts them to all WebSocket clients subscribed to `ORDER_BOOK` for that ticker.
+
+```
+POST http://localhost:8080/internal/push/order-book-update
+Content-Type: application/json
+```
+
+Your service seeds this JSON via `HTTP POST` request
+
+
+```json
+{
+  "ticker": "AAPL",
+  "bids": [
+    { "price": 150.50, "quantity": 300 },
+    { "price": 150.25, "quantity": 450 }
+  ],
+  "asks": [
+    { "price": 150.75, "quantity": 250 },
+    { "price": 151.00, "quantity": 500 }
+  ]
+}
+```
+
+Responses:
+
+| Status | Meaning |
+|---|---|
+| `202 Accepted` | Update received and queued for broadcast |
+| `400 Bad Request` | Missing ticker or malformed JSON |
+| `500 Internal Server Error` | Hub not initialised |
+
+---
+
+## Pushing Market Events (Internal Services)
+
+Internal services — such as a news feed or risk engine — push market-wide events to the server via HTTP. The server then broadcasts them to all WebSocket clients subscribed to `MARKET_EVENTS`.
+
+```
+POST http://localhost:8080/internal/push/market-event
+Content-Type: application/json
+```
+
+Your service seeds this JSON via `HTTP POST` request
+
+
+```json
+{
+  "event_id": "evt-456",
+  "event_type": "HALT",
+  "headline": "Trading halted for AAPL",
+  "scope": "TICKER",
+  "target": "AAPL",
+  "magnitude": 0.0,
+  "duration_ticks": 5,
+  "market_time": "2026-04-27T15:30:00Z"
+}
+```
+
+Responses:
+
+| Status | Meaning |
+|---|---|
+| `202 Accepted` | Event received and queued for broadcast |
+| `400 Bad Request` | Malformed JSON |
+| `500 Internal Server Error` | Hub not initialised |
+
+**For a working implementation of all of this, see [`cmd/tests/test.go`](cmd/tests/test.go).**
 
 ---
 
 ## Run and debug existent tests to help you understand how to connect your service to the Websocket
 
-Start the server first and start the logs
+Make sure the docker container is running, then start the logs
 
 ```bash
 docker compose logs -f 
@@ -298,11 +401,10 @@ To watch the messages arrive, run one of the test clients in another terminal:
 go run cmd/client/your_service
 ```
 
-then in a separate terminal start a test:
+then in a separate terminal start the test (this test broadcast test data to all internal services but you will only receave the message for only the service that your client is `SUBSCRIBED` to):
 
 
 ```bash
-go run cmd/tests/your_service
+go run cmd/tests/test.go
 ```
-
 

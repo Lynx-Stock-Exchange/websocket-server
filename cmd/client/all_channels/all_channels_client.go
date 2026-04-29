@@ -15,11 +15,28 @@ func main() {
 	defer conn.Close()
 
 	readConnected(conn)
+
 	subscribe(conn, ws.SubscribePayload{
 		Channel: ws.ChannelPriceFeed,
 		Tickers: []string{"AAPL"},
 	})
 	log.Println("Subscribed to PRICE_FEED for AAPL")
+
+	subscribe(conn, ws.SubscribePayload{
+		Channel: ws.ChannelOrderBook,
+		Ticker:  "AAPL",
+	})
+	log.Println("Subscribed to ORDER_BOOK for AAPL")
+
+	subscribe(conn, ws.SubscribePayload{
+		Channel: ws.ChannelOrderUpdates,
+	})
+	log.Println("Subscribed to ORDER_UPDATES")
+
+	subscribe(conn, ws.SubscribePayload{
+		Channel: ws.ChannelMarketEvents,
+	})
+	log.Println("Subscribed to MARKET_EVENTS")
 
 	printIncoming(conn)
 }

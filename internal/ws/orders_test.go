@@ -90,7 +90,11 @@ func TestHandlePlaceOrderSuccessEnqueuesOrderAck(t *testing.T) {
 			Status:  "PENDING",
 		},
 	}
-	client := newClient(NewHub(), nil, "platform-1", service, 1)
+	hub := NewHub()
+	go hub.Run()
+
+	client := newClient(hub, nil, "platform-1", service, 1)
+	hub.Register(client)
 
 	raw := mustMarshalRaw(t, PlaceOrderPayload{
 		PlatformUserID: "user-1",
@@ -132,7 +136,11 @@ func TestHandlePlaceOrderServiceErrorEnqueuesOrderRejected(t *testing.T) {
 			err:  errors.New("market is currently closed"),
 		},
 	}
-	client := newClient(NewHub(), nil, "platform-1", service, 1)
+	hub := NewHub()
+	go hub.Run()
+
+	client := newClient(hub, nil, "platform-1", service, 1)
+	hub.Register(client)
 
 	raw := mustMarshalRaw(t, PlaceOrderPayload{
 		PlatformUserID: "user-1",

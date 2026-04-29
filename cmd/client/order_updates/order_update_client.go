@@ -16,10 +16,9 @@ func main() {
 
 	readConnected(conn)
 	subscribe(conn, ws.SubscribePayload{
-		Channel: ws.ChannelPriceFeed,
-		Tickers: []string{"AAPL"},
+		Channel: ws.ChannelOrderUpdates,
 	})
-	log.Println("Subscribed to PRICE_FEED for AAPL")
+	log.Println("Subscribed to ORDER_UPDATES")
 
 	printIncoming(conn)
 }

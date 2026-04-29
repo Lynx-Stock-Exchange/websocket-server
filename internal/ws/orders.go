@@ -17,18 +17,18 @@ func (c *Client) handlePlaceOrder(raw json.RawMessage) bool {
 
 	normalizePlaceOrder(&payload)
 	if err := validatePlaceOrder(payload); err != nil {
-		c.send <- NewEnvelope(MessageOrderRejected, OrderRejectedPayload{
+		c.hub.Send(c, NewEnvelope(MessageOrderRejected, OrderRejectedPayload{
 			Code:    "INVALID_ORDER",
 			Message: err.Error(),
-		})
+		}))
 		return true
 	}
 
 	if c.orderService == nil {
-		c.send <- NewEnvelope(MessageOrderRejected, OrderRejectedPayload{
+		c.hub.Send(c, NewEnvelope(MessageOrderRejected, OrderRejectedPayload{
 			Code:    "ORDER_SERVICE_UNAVAILABLE",
 			Message: "order placement service is not wired yet",
-		})
+		}))
 		return true
 	}
 
@@ -44,17 +44,17 @@ func (c *Client) handlePlaceOrder(raw json.RawMessage) bool {
 		ExpiresAt:      payload.ExpiresAt,
 	})
 	if err != nil {
-		c.send <- NewEnvelope(MessageOrderRejected, OrderRejectedPayload{
+		c.hub.Send(c, NewEnvelope(MessageOrderRejected, OrderRejectedPayload{
 			Code:    rejectionCode(err),
 			Message: err.Error(),
-		})
+		}))
 		return true
 	}
 
-	c.send <- NewEnvelope(MessageOrderAck, OrderAckPayload{
+	c.hub.Send(c, NewEnvelope(MessageOrderAck, OrderAckPayload{
 		OrderID: resp.OrderID,
 		Status:  resp.Status,
-	})
+	}))
 	return true
 }
 
