@@ -249,16 +249,16 @@ Send a `PLACE_ORDER` message over the WebSocket:
 
 ---
 
-## Internal Push Endpoints
+## Pushing Price Updates (Internal Services)
 
-Internal services push fake real-time data to the WebSocket server over HTTP. The server then broadcasts the update to subscribed broker WebSocket clients.
+Internal services — such as a price feed engine — push price updates to the server via HTTP. The server then broadcasts them to all WebSocket clients subscribed to that ticker.
 
 ```
 POST http://localhost:8080/internal/push/price-update
 Content-Type: application/json
 ```
 
-Request body:
+Your service seeds this JSON via `HTTP POST` request
 
 ```json
 {
@@ -271,92 +271,140 @@ Request body:
 }
 ```
 
-Other fake internal push endpoints:
-
-```text
-POST http://localhost:8080/internal/push/order-update
-POST http://localhost:8080/internal/push/order-book-update
-POST http://localhost:8080/internal/push/market-event
-```
-
-Responses for all internal push endpoints:
+Responses:
 
 | Status | Meaning |
 |---|---|
 | `202 Accepted` | Update received and queued for broadcast |
-| `400 Bad Request` | Missing required routing field or malformed JSON |
+| `400 Bad Request` | Missing ticker or malformed JSON |
 | `500 Internal Server Error` | Hub not initialised |
 
 ---
 
-## Demo Runbook
+## Pushing Order Updates (Internal Services)
 
-Open separate WSL terminals and run the server first:
+Internal services — such as an order matching engine — push order status changes to the server via HTTP. The server then delivers them to all WebSocket clients of that platform subscribed to `ORDER_UPDATES`.
 
-```bash
-cd ~/stock-exchange-ws
-go run cmd/exchange/main.go
+```
+POST http://localhost:8080/internal/push/order-update
+Content-Type: application/json
 ```
 
-Then run one or more broker WebSocket clients:
+Your service seeds this JSON via `HTTP POST` request
 
-```bash
-cd ~/stock-exchange-ws
-go run cmd/client/price_feed/price_feed_client.go
+```json
+{
+  "platform_id": "platform-xyz",
+  "order_id": "ord-123",
+  "status": "FILLED",
+  "filled_quantity": 10,
+  "average_fill_price": 150.75,
+  "exchange_fee": 0.15,
+  "market_time": "2026-04-27T15:30:00Z"
+}
 ```
 
-```bash
-cd ~/stock-exchange-ws
-go run cmd/client/order_updates/order_update-client.go
+Responses:
+
+| Status | Meaning |
+|---|---|
+| `202 Accepted` | Update received and queued for delivery |
+| `400 Bad Request` | Missing `platform_id` or malformed JSON |
+| `500 Internal Server Error` | Hub not initialised |
+
+---
+
+## Pushing Order Book Updates (Internal Services)
+
+Internal services — such as a matching engine or book aggregator — push order book snapshots to the server via HTTP. The server then broadcasts them to all WebSocket clients subscribed to `ORDER_BOOK` for that ticker.
+
+```
+POST http://localhost:8080/internal/push/order-book-update
+Content-Type: application/json
 ```
 
-```bash
-cd ~/stock-exchange-ws
-go run cmd/client/order_book/order_book_client.go
+Your service seeds this JSON via `HTTP POST` request
+
+
+```json
+{
+  "ticker": "AAPL",
+  "bids": [
+    { "price": 150.50, "quantity": 300 },
+    { "price": 150.25, "quantity": 450 }
+  ],
+  "asks": [
+    { "price": 150.75, "quantity": 250 },
+    { "price": 151.00, "quantity": 500 }
+  ]
+}
 ```
 
-```bash
-cd ~/stock-exchange-ws
-go run cmd/client/market_events/market_events_client.go
+Responses:
+
+| Status | Meaning |
+|---|---|
+| `202 Accepted` | Update received and queued for broadcast |
+| `400 Bad Request` | Missing ticker or malformed JSON |
+| `500 Internal Server Error` | Hub not initialised |
+
+---
+
+## Pushing Market Events (Internal Services)
+
+Internal services — such as a news feed or risk engine — push market-wide events to the server via HTTP. The server then broadcasts them to all WebSocket clients subscribed to `MARKET_EVENTS`.
+
+```
+POST http://localhost:8080/internal/push/market-event
+Content-Type: application/json
 ```
 
-To prove one WebSocket connection can subscribe to all channels at once:
+Your service seeds this JSON via `HTTP POST` request
 
-```bash
-cd ~/stock-exchange-ws
-go run cmd/client/all_channels/all_channels_client.go
+
+```json
+{
+  "event_id": "evt-456",
+  "event_type": "HALT",
+  "headline": "Trading halted for AAPL",
+  "scope": "TICKER",
+  "target": "AAPL",
+  "magnitude": 0.0,
+  "duration_ticks": 5,
+  "market_time": "2026-04-27T15:30:00Z"
+}
 ```
 
-In another terminal, run the fake internal services. This posts fake price, order, order book, and market event updates every 3 seconds:
+Responses:
+
+| Status | Meaning |
+|---|---|
+| `202 Accepted` | Event received and queued for broadcast |
+| `400 Bad Request` | Malformed JSON |
+| `500 Internal Server Error` | Hub not initialised |
+
+**For a working implementation of all of this, see [`cmd/tests/test.go`](cmd/tests/test.go).**
+
+---
+
+## Run and debug existent tests to help you understand how to connect your service to the Websocket
+
+Make sure the docker container is running, then start the logs
 
 ```bash
-cd ~/stock-exchange-ws
+docker compose logs -f 
+```
+
+To watch the messages arrive, run one of the test clients in another terminal:
+
+```bash
+go run cmd/client/your_service
+```
+
+then in a separate terminal start the test (this test broadcast test data to all internal services but you will only receave the message for only the service that your client is `SUBSCRIBED` to):
+
+
+```bash
 go run cmd/tests/test.go
-```
-
-To demo broker order placement over the same WebSocket connection:
-
-```bash
-cd ~/stock-exchange-ws
-go run cmd/client/place_order/place_order_client.go
-```
-
-That command sends:
-
-1. A valid `PLACE_ORDER`, which receives `ORDER_ACK`.
-2. An invalid `PLACE_ORDER`, which receives `ORDER_REJECTED`.
-
-The prototype flow is:
-
-```text
-fake internal service -> HTTP POST -> websocket hub -> subscribed broker client
-broker client -> websocket PLACE_ORDER -> fake order service -> ORDER_ACK / ORDER_REJECTED
-```
-
-Before demoing, run:
-
-```bash
-cd ~/stock-exchange-ws
-go test ./...
 ```
 

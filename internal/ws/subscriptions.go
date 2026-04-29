@@ -27,7 +27,7 @@ func (c *Client) handleSubscribe(raw json.RawMessage) bool {
 			Channel: ChannelPriceFeed,
 			Tickers: tickers,
 		})
-		log.Println("Subscribed to price feed for tickers: ", tickers)
+		log.Printf("Subscribed to PRICE FEED for tickers: %v\n", tickers)
 		return true
 
 	// ORDER_UPDATES
@@ -36,13 +36,17 @@ func (c *Client) handleSubscribe(raw json.RawMessage) bool {
 			Client:  c,
 			Channel: ChannelOrderUpdates,
 		})
+		log.Printf("Subscribed to ORDER UPDATES for platform %s\n", c.platformID)
 		return true
+	// MARKET_EVENTS
 	case ChannelMarketEvents:
 		c.hub.Subscribe(SubscriptionRequest{
 			Client:  c,
 			Channel: ChannelMarketEvents,
 		})
+		log.Printf("Subscribed to MARKET EVENTS for platform %s\n", c.platformID)
 		return true
+	// ORDER_BOOK
 	case ChannelOrderBook:
 		ticker := normalizeTicker(payload.Ticker)
 		if ticker == "" {
@@ -53,6 +57,7 @@ func (c *Client) handleSubscribe(raw json.RawMessage) bool {
 			Channel: ChannelOrderBook,
 			Ticker:  ticker,
 		})
+		log.Printf("Subscribed to ORDER BOOK for ticker %s\n", ticker)
 		return true
 	default:
 		return false
