@@ -320,6 +320,13 @@ cd ~/stock-exchange-ws
 go run cmd/client/market_events/market_events_client.go
 ```
 
+To prove one WebSocket connection can subscribe to all channels at once:
+
+```bash
+cd ~/stock-exchange-ws
+go run cmd/client/all_channels/all_channels_client.go
+```
+
 In another terminal, run the fake internal services. This posts fake price, order, order book, and market event updates every 3 seconds:
 
 ```bash
