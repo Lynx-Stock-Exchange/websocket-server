@@ -249,9 +249,9 @@ Send a `PLACE_ORDER` message over the WebSocket:
 
 ---
 
-## Pushing Price Updates (Internal Services)
+## Internal Push Endpoints
 
-Internal services — such as a price feed engine — push price updates to the server via HTTP. The server then broadcasts them to all WebSocket clients subscribed to that ticker.
+Internal services push fake real-time data to the WebSocket server over HTTP. The server then broadcasts the update to subscribed broker WebSocket clients.
 
 ```
 POST http://localhost:8080/internal/push/price-update
@@ -271,38 +271,85 @@ Request body:
 }
 ```
 
-Responses:
+Other fake internal push endpoints:
+
+```text
+POST http://localhost:8080/internal/push/order-update
+POST http://localhost:8080/internal/push/order-book-update
+POST http://localhost:8080/internal/push/market-event
+```
+
+Responses for all internal push endpoints:
 
 | Status | Meaning |
 |---|---|
 | `202 Accepted` | Update received and queued for broadcast |
-| `400 Bad Request` | Missing ticker or malformed JSON |
+| `400 Bad Request` | Missing required routing field or malformed JSON |
 | `500 Internal Server Error` | Hub not initialised |
-
-**For a working implementation of this, see [`cmd/tests/test.go`](cmd/tests/..).** [`cmd/client/..`](cmd/tests/test.go) to see a working implementation 
-of the services
 
 ---
 
-## Run and debug existent tests to help you understand how to connect your service to the Websocket
+## Demo Runbook
 
-Start the server first and start the logs
-
-```bash
-docker compose logs -f 
-```
-
-To watch the messages arrive, run one of the test clients in another terminal:
+Open separate WSL terminals and run the server first:
 
 ```bash
-go run cmd/client/your_service
+cd ~/stock-exchange-ws
+go run cmd/exchange/main.go
 ```
 
-then in a separate terminal start a test:
-
+Then run one or more broker WebSocket clients:
 
 ```bash
-go run cmd/tests/your_service
+cd ~/stock-exchange-ws
+go run cmd/client/price_feed/price_feed_client.go
 ```
 
+```bash
+cd ~/stock-exchange-ws
+go run cmd/client/order_updates/order_update-client.go
+```
+
+```bash
+cd ~/stock-exchange-ws
+go run cmd/client/order_book/order_book_client.go
+```
+
+```bash
+cd ~/stock-exchange-ws
+go run cmd/client/market_events/market_events_client.go
+```
+
+In another terminal, run the fake internal services. This posts fake price, order, order book, and market event updates every 3 seconds:
+
+```bash
+cd ~/stock-exchange-ws
+go run cmd/tests/test.go
+```
+
+To demo broker order placement over the same WebSocket connection:
+
+```bash
+cd ~/stock-exchange-ws
+go run cmd/client/place_order/place_order_client.go
+```
+
+That command sends:
+
+1. A valid `PLACE_ORDER`, which receives `ORDER_ACK`.
+2. An invalid `PLACE_ORDER`, which receives `ORDER_REJECTED`.
+
+The prototype flow is:
+
+```text
+fake internal service -> HTTP POST -> websocket hub -> subscribed broker client
+broker client -> websocket PLACE_ORDER -> fake order service -> ORDER_ACK / ORDER_REJECTED
+```
+
+Before demoing, run:
+
+```bash
+cd ~/stock-exchange-ws
+go test ./...
+```
 
