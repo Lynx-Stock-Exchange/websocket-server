@@ -10,14 +10,13 @@ import (
 )
 
 type fakeOrderService struct {
-	resp services.PlaceOrderResponse
-	err  error
-	req  services.PlaceOrderRequest
+	err error
+	req services.PlaceOrderRequest
 }
 
-func (f *fakeOrderService) PlaceOrder(_ context.Context, req services.PlaceOrderRequest) (services.PlaceOrderResponse, error) {
+func (f *fakeOrderService) PlaceOrder(_ context.Context, req services.PlaceOrderRequest) error {
 	f.req = req
-	return f.resp, f.err
+	return f.err
 }
 
 type codedError struct {
@@ -84,12 +83,7 @@ func TestValidatePlaceOrderMissingCommonFieldFails(t *testing.T) {
 }
 
 func TestHandlePlaceOrderSuccessEnqueuesOrderAck(t *testing.T) {
-	service := &fakeOrderService{
-		resp: services.PlaceOrderResponse{
-			OrderID: "ord-123",
-			Status:  "PENDING",
-		},
-	}
+	service := &fakeOrderService{}
 	hub := NewHub()
 	go hub.Run()
 
@@ -108,8 +102,19 @@ func TestHandlePlaceOrderSuccessEnqueuesOrderAck(t *testing.T) {
 	if !client.handlePlaceOrder(raw) {
 		t.Fatalf("handlePlaceOrder returned false, want true")
 	}
+	if service.req.ClientRequestID == "" {
+		t.Fatalf("service req ClientRequestID is empty")
+	}
 
-	msg := <-client.send
+	hub.CompleteOrderRequest(OrderCommandResult{
+		ClientRequestID: service.req.ClientRequestID,
+		PlatformID:      "platform-1",
+		Accepted:        true,
+		OrderID:         "ord-123",
+		Status:          "PENDING",
+	})
+
+	msg := readEnvelope(t, client.send)
 	if msg.Type != MessageOrderAck {
 		t.Fatalf("message type = %q, want %q", msg.Type, MessageOrderAck)
 	}
@@ -155,7 +160,7 @@ func TestHandlePlaceOrderServiceErrorEnqueuesOrderRejected(t *testing.T) {
 		t.Fatalf("handlePlaceOrder returned false, want true")
 	}
 
-	msg := <-client.send
+	msg := readEnvelope(t, client.send)
 	if msg.Type != MessageOrderRejected {
 		t.Fatalf("message type = %q, want %q", msg.Type, MessageOrderRejected)
 	}

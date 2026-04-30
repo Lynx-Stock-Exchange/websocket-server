@@ -14,6 +14,21 @@ type ClientMessage struct {
 	Envelope Envelope
 }
 
+type PendingOrderRequest struct {
+	Client          *Client
+	ClientRequestID string
+}
+
+type OrderCommandResult struct {
+	ClientRequestID string
+	PlatformID      string
+	Accepted        bool
+	OrderID         string
+	Status          string
+	Code            string
+	Message         string
+}
+
 type SubscriptionRequest struct {
 	Client  *Client
 	Channel Channel
@@ -26,6 +41,8 @@ type Hub struct {
 	unregister     chan *Client
 	subscribe      chan SubscriptionRequest
 	clientMessages chan ClientMessage
+	pendingOrders  chan PendingOrderRequest
+	orderResults   chan OrderCommandResult
 	priceUpdates   chan PriceUpdatePayload
 	orderUpdates   chan orderUpdatePublication
 	orderBooks     chan OrderBookUpdatePayload
@@ -37,6 +54,7 @@ type Hub struct {
 	orderBookByTicker       map[string]map[*Client]bool
 	orderUpdatesByPlatform  map[string]map[*Client]bool
 	marketEventsSubscribers map[*Client]bool
+	pendingOrderClients     map[string]*Client
 }
 
 func NewHub() *Hub {
@@ -45,6 +63,8 @@ func NewHub() *Hub {
 		unregister:              make(chan *Client),
 		subscribe:               make(chan SubscriptionRequest),
 		clientMessages:          make(chan ClientMessage),
+		pendingOrders:           make(chan PendingOrderRequest),
+		orderResults:            make(chan OrderCommandResult),
 		priceUpdates:            make(chan PriceUpdatePayload),
 		orderUpdates:            make(chan orderUpdatePublication),
 		orderBooks:              make(chan OrderBookUpdatePayload),
@@ -54,6 +74,7 @@ func NewHub() *Hub {
 		orderBookByTicker:       make(map[string]map[*Client]bool),
 		orderUpdatesByPlatform:  make(map[string]map[*Client]bool),
 		marketEventsSubscribers: make(map[*Client]bool),
+		pendingOrderClients:     make(map[string]*Client),
 	}
 }
 
@@ -72,6 +93,12 @@ func (h *Hub) Run() {
 			if h.clients[message.Client] {
 				h.enqueue(message.Client, message.Envelope)
 			}
+		case req := <-h.pendingOrders:
+			if h.clients[req.Client] {
+				h.pendingOrderClients[req.ClientRequestID] = req.Client
+			}
+		case result := <-h.orderResults:
+			h.completeOrderRequest(result)
 
 		// Broadcast price updates to subscribed clients
 		case payload := <-h.priceUpdates:
@@ -115,6 +142,17 @@ func (h *Hub) Send(client *Client, envelope Envelope) {
 		Client:   client,
 		Envelope: envelope,
 	}
+}
+
+func (h *Hub) TrackOrderRequest(client *Client, clientRequestID string) {
+	h.pendingOrders <- PendingOrderRequest{
+		Client:          client,
+		ClientRequestID: clientRequestID,
+	}
+}
+
+func (h *Hub) CompleteOrderRequest(result OrderCommandResult) {
+	h.orderResults <- result
 }
 
 func (h *Hub) PublishPriceUpdate(payload PriceUpdatePayload) {
@@ -184,8 +222,51 @@ func (h *Hub) unregisterClient(client *Client) {
 
 	delete(h.clients, client)
 	h.removeClientSubscriptions(client)
+	h.removePendingOrderRequests(client)
 	close(client.send)
 	log.Println("Client unregistered. Client: ", client.remoteAddr(), " PlatformID: ", client.platformID)
+}
+
+func (h *Hub) completeOrderRequest(result OrderCommandResult) {
+	client, exists := h.pendingOrderClients[result.ClientRequestID]
+	if !exists {
+		return
+	}
+
+	delete(h.pendingOrderClients, result.ClientRequestID)
+	if !h.clients[client] {
+		return
+	}
+
+	if result.Accepted {
+		h.enqueue(client, NewEnvelope(MessageOrderAck, OrderAckPayload{
+			OrderID: result.OrderID,
+			Status:  result.Status,
+		}))
+		return
+	}
+
+	code := result.Code
+	if code == "" {
+		code = "ORDER_REJECTED"
+	}
+	message := result.Message
+	if message == "" {
+		message = "order rejected"
+	}
+
+	h.enqueue(client, NewEnvelope(MessageOrderRejected, OrderRejectedPayload{
+		Code:    code,
+		Message: message,
+	}))
+}
+
+func (h *Hub) removePendingOrderRequests(client *Client) {
+	for clientRequestID, pendingClient := range h.pendingOrderClients {
+		if pendingClient == client {
+			delete(h.pendingOrderClients, clientRequestID)
+		}
+	}
 }
 
 func (h *Hub) removeClientSubscriptions(client *Client) {

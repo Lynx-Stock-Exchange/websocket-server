@@ -2,12 +2,18 @@ package ws
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"strings"
+	"time"
 
 	"stock-exchange-ws/internal/services"
 )
+
+const orderCommandPublishTimeout = 5 * time.Second
 
 func (c *Client) handlePlaceOrder(raw json.RawMessage) bool {
 	var payload PlaceOrderPayload
@@ -32,29 +38,35 @@ func (c *Client) handlePlaceOrder(raw json.RawMessage) bool {
 		return true
 	}
 
-	resp, err := c.orderService.PlaceOrder(context.Background(), services.PlaceOrderRequest{
-		PlatformID:     c.platformID,
-		PlatformUserID: payload.PlatformUserID,
-		InstrumentType: payload.InstrumentType,
-		InstrumentID:   payload.InstrumentID,
-		OrderType:      payload.OrderType,
-		Side:           payload.Side,
-		Quantity:       payload.Quantity,
-		LimitPrice:     payload.LimitPrice,
-		ExpiresAt:      payload.ExpiresAt,
+	clientRequestID := newClientRequestID()
+	c.hub.TrackOrderRequest(c, clientRequestID)
+
+	ctx, cancel := context.WithTimeout(context.Background(), orderCommandPublishTimeout)
+	defer cancel()
+
+	err := c.orderService.PlaceOrder(ctx, services.PlaceOrderRequest{
+		ClientRequestID: clientRequestID,
+		PlatformID:      c.platformID,
+		PlatformUserID:  payload.PlatformUserID,
+		InstrumentType:  payload.InstrumentType,
+		InstrumentID:    payload.InstrumentID,
+		OrderType:       payload.OrderType,
+		Side:            payload.Side,
+		Quantity:        payload.Quantity,
+		LimitPrice:      payload.LimitPrice,
+		ExpiresAt:       payload.ExpiresAt,
 	})
 	if err != nil {
-		c.hub.Send(c, NewEnvelope(MessageOrderRejected, OrderRejectedPayload{
-			Code:    rejectionCode(err),
-			Message: err.Error(),
-		}))
+		c.hub.CompleteOrderRequest(OrderCommandResult{
+			ClientRequestID: clientRequestID,
+			PlatformID:      c.platformID,
+			Accepted:        false,
+			Code:            rejectionCode(err),
+			Message:         err.Error(),
+		})
 		return true
 	}
 
-	c.hub.Send(c, NewEnvelope(MessageOrderAck, OrderAckPayload{
-		OrderID: resp.OrderID,
-		Status:  resp.Status,
-	}))
 	return true
 }
 
@@ -108,4 +120,13 @@ func rejectionCode(err error) string {
 	}
 
 	return "ORDER_REJECTED"
+}
+
+func newClientRequestID() string {
+	bytes := make([]byte, 16)
+	if _, err := rand.Read(bytes); err != nil {
+		return fmt.Sprintf("req-%d", time.Now().UnixNano())
+	}
+
+	return "req-" + hex.EncodeToString(bytes)
 }
