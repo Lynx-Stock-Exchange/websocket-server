@@ -4,13 +4,11 @@ import (
 	"context"
 	"log"
 	"net/http"
-	"os"
 	"os/signal"
 	"syscall"
 	"time"
 
-	"stock-exchange-ws/internal/httpserver"
-	"stock-exchange-ws/internal/services"
+	"stock-exchange-ws/internal/kafkabus"
 	"stock-exchange-ws/internal/ws"
 
 	"github.com/gorilla/websocket"
@@ -36,24 +34,34 @@ func (m *MarketTimeProvider) ServerMarketTime() string {
 	return time.Now().Format(time.RFC3339)
 }
 
-// Order service fake data for testing
-type OrderService struct{}
-
-func (m *OrderService) PlaceOrder(ctx context.Context, req services.PlaceOrderRequest) (services.PlaceOrderResponse, error) {
-	return services.PlaceOrderResponse{
-		OrderID: "order-number",
-		Status:  "PENDING",
-	}, nil
-}
-
 func main() {
+	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+	defer stop()
+
 	// Start the HUB
 	hub := ws.NewHub()
 	go hub.Run()
 	log.Println("✓ Hub started")
 
+	kafkaConfig := kafkabus.ConfigFromEnv()
+	log.Printf("Kafka brokers: %v\n", kafkaConfig.Brokers)
+
+	kafkaConsumers := kafkabus.NewConsumers(kafkaConfig, hub)
+	kafkaConsumers.Start(ctx)
+	defer func() {
+		if err := kafkaConsumers.Close(); err != nil {
+			log.Printf("Kafka consumers close error: %v\n", err)
+		}
+	}()
+	log.Println("✓ Kafka consumers started")
+
 	// Initialize mock services for testing
-	orderService := &OrderService{}
+	orderService := kafkabus.NewOrderProducer(kafkaConfig)
+	defer func() {
+		if err := orderService.Close(); err != nil {
+			log.Printf("Kafka order producer close error: %v\n", err)
+		}
+	}()
 	authenticator := &Authenticator{}
 	marketTimeProvider := &MarketTimeProvider{}
 
@@ -77,7 +85,6 @@ func main() {
 	mux := http.NewServeMux()
 
 	mux.Handle("/ws", handler)
-	httpserver.NewInternalPushHandler(hub).RegisterRoutes(mux)
 
 	// Start HTTP server
 	listenAddr := ":8080"
@@ -88,11 +95,13 @@ func main() {
 
 	go func() {
 		log.Printf("Starting WebSocket server on ws://localhost:8080/ws\n\n")
-		log.Printf("Internal push endpoints:\n")
-		log.Printf("  POST http://localhost:8080/internal/push/price-update\n")
-		log.Printf("  POST http://localhost:8080/internal/push/order-update\n")
-		log.Printf("  POST http://localhost:8080/internal/push/order-book-update\n")
-		log.Printf("  POST http://localhost:8080/internal/push/market-event\n\n")
+		log.Printf("Kafka topics:\n")
+		log.Printf("  %s\n", kafkaConfig.Topics.PriceUpdates)
+		log.Printf("  %s\n", kafkaConfig.Topics.OrderUpdates)
+		log.Printf("  %s\n", kafkaConfig.Topics.OrderBookUpdates)
+		log.Printf("  %s\n", kafkaConfig.Topics.MarketEvents)
+		log.Printf("  %s\n", kafkaConfig.Topics.OrderCommands)
+		log.Printf("  %s\n\n", kafkaConfig.Topics.OrderCommandResults)
 		log.Printf("Test credentials: api_key=test-api-key, api_secret=test-api-secret\n\n")
 		if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 			log.Fatalf("Server error: %v\n", err)
@@ -100,15 +109,13 @@ func main() {
 	}()
 
 	// shutdown
-	sigChan := make(chan os.Signal, 1)
-	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
-	<-sigChan
+	<-ctx.Done()
 
 	log.Println("\n\n Shutting down server...")
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
-	if err := server.Shutdown(ctx); err != nil {
+	if err := server.Shutdown(shutdownCtx); err != nil {
 		log.Fatalf("Server shutdown error: %v\n", err)
 	}
 	log.Println("✓ Server stopped")

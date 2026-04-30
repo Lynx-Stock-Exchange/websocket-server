@@ -101,6 +101,46 @@ func TestHubSendIgnoresUnregisteredClient(t *testing.T) {
 	assertNoEnvelope(t, client.send)
 }
 
+func TestCompleteOrderRequestSendsAckToOriginalClient(t *testing.T) {
+	hub := NewHub()
+	go hub.Run()
+
+	client := newClient(hub, nil, "platform-a", nil, 1)
+	hub.Register(client)
+	hub.TrackOrderRequest(client, "req-1")
+	hub.CompleteOrderRequest(OrderCommandResult{
+		ClientRequestID: "req-1",
+		Accepted:        true,
+		OrderID:         "ord-1",
+		Status:          "PENDING",
+	})
+
+	msg := readEnvelope(t, client.send)
+	if msg.Type != MessageOrderAck {
+		t.Fatalf("message type = %q, want %q", msg.Type, MessageOrderAck)
+	}
+}
+
+func TestCompleteOrderRequestSendsRejectionToOriginalClient(t *testing.T) {
+	hub := NewHub()
+	go hub.Run()
+
+	client := newClient(hub, nil, "platform-a", nil, 1)
+	hub.Register(client)
+	hub.TrackOrderRequest(client, "req-1")
+	hub.CompleteOrderRequest(OrderCommandResult{
+		ClientRequestID: "req-1",
+		Accepted:        false,
+		Code:            "MARKET_CLOSED",
+		Message:         "market is currently closed",
+	})
+
+	msg := readEnvelope(t, client.send)
+	if msg.Type != MessageOrderRejected {
+		t.Fatalf("message type = %q, want %q", msg.Type, MessageOrderRejected)
+	}
+}
+
 func TestEnqueueRemovesClientWhenSendBufferIsFull(t *testing.T) {
 	hub := NewHub()
 	client := newClient(hub, nil, "platform-a", nil, 1)

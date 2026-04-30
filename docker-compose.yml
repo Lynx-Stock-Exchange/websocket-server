@@ -1,17 +1,46 @@
-version: '3.9'
-
 services:
+  redpanda:
+    image: docker.redpanda.com/redpandadata/redpanda:v24.3.5
+    container_name: stock-exchange-redpanda
+    command:
+      - redpanda
+      - start
+      - --overprovisioned
+      - --smp
+      - "1"
+      - --memory
+      - 512M
+      - --reserve-memory
+      - 0M
+      - --node-id
+      - "0"
+      - --check=false
+      - --kafka-addr
+      - PLAINTEXT://0.0.0.0:9092,OUTSIDE://0.0.0.0:19092
+      - --advertise-kafka-addr
+      - PLAINTEXT://redpanda:9092,OUTSIDE://localhost:19092
+    ports:
+      - "19092:19092"
+      - "9644:9644"
+    restart: unless-stopped
+    networks:
+      - exchange-network
+
   exchange-server:
     build:
       context: .
       dockerfile: Dockerfile
     container_name: stock-exchange-ws
+    depends_on:
+      - redpanda
     ports:
       - "8080:8080"
     environment:
       # Configuration - override these at runtime
       - LISTEN_ADDR=:8080
       - LOG_LEVEL=info
+      - KAFKA_BROKERS=redpanda:9092
+      - KAFKA_GROUP_ID=websocket-server
     restart: unless-stopped
     networks:
       - exchange-network
