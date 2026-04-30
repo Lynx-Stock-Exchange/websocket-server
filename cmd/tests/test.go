@@ -1,36 +1,44 @@
 // This command acts like fake internal microservices.
-// It pushes updates into the websocket server over HTTP so broker demo clients
-// can receive them through their websocket subscriptions.
+// It publishes updates to Kafka topics so the websocket server consumes them
+// and broadcasts them to connected clients through their subscriptions.
 package main
 
 import (
-	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"log"
-	"net/http"
+	"os"
+	"strings"
 	"time"
 
+	kafka "github.com/segmentio/kafka-go"
+
+	"stock-exchange-ws/internal/kafkaconsumer"
 	"stock-exchange-ws/internal/ws"
 )
 
 const (
-	baseURL    = "http://localhost:8080"
 	platformID = "platform-xyz"
 	ticker     = "AAPL"
 )
 
-type orderUpdatePushPayload struct {
-	PlatformID       string  `json:"platform_id"`
-	OrderID          string  `json:"order_id"`
-	Status           string  `json:"status"`
-	FilledQuantity   int64   `json:"filled_quantity"`
-	AverageFillPrice float64 `json:"average_fill_price"`
-	ExchangeFee      float64 `json:"exchange_fee"`
-	MarketTime       string  `json:"market_time"`
-}
-
 func main() {
+	brokers := kafkaBrokers()
+	log.Printf("Connecting to Kafka brokers: %s", strings.Join(brokers, ","))
+
+	writers := map[string]*kafka.Writer{
+		kafkaconsumer.TopicPriceUpdates:     newWriter(brokers, kafkaconsumer.TopicPriceUpdates),
+		kafkaconsumer.TopicOrderUpdates:     newWriter(brokers, kafkaconsumer.TopicOrderUpdates),
+		kafkaconsumer.TopicOrderBookUpdates: newWriter(brokers, kafkaconsumer.TopicOrderBookUpdates),
+		kafkaconsumer.TopicMarketEvents:     newWriter(brokers, kafkaconsumer.TopicMarketEvents),
+	}
+	defer func() {
+		for _, w := range writers {
+			w.Close()
+		}
+	}()
+
 	price := 150.25
 	sequence := int64(1)
 
@@ -38,7 +46,7 @@ func main() {
 		marketTime := time.Now().UTC().Format(time.RFC3339)
 		price += 0.5
 
-		postJSON("/internal/push/price-update", ws.PriceUpdatePayload{
+		produce(writers[kafkaconsumer.TopicPriceUpdates], ws.PriceUpdatePayload{
 			Ticker:     ticker,
 			Price:      price,
 			Change:     0.5,
@@ -47,7 +55,7 @@ func main() {
 			MarketTime: marketTime,
 		})
 
-		postJSON("/internal/push/order-update", orderUpdatePushPayload{
+		produce(writers[kafkaconsumer.TopicOrderUpdates], kafkaconsumer.OrderUpdateMessage{
 			PlatformID:       platformID,
 			OrderID:          fmt.Sprintf("demo-order-%03d", sequence),
 			Status:           "FILLED",
@@ -57,7 +65,7 @@ func main() {
 			MarketTime:       marketTime,
 		})
 
-		postJSON("/internal/push/order-book-update", ws.OrderBookUpdatePayload{
+		produce(writers[kafkaconsumer.TopicOrderBookUpdates], ws.OrderBookUpdatePayload{
 			Ticker: ticker,
 			Bids: []ws.BookLevel{
 				{Price: price - 0.10, Quantity: 300 + sequence},
@@ -69,7 +77,7 @@ func main() {
 			},
 		})
 
-		postJSON("/internal/push/market-event", ws.MarketEventPayload{
+		produce(writers[kafkaconsumer.TopicMarketEvents], ws.MarketEventPayload{
 			EventID:       fmt.Sprintf("demo-event-%03d", sequence),
 			EventType:     "NEWS",
 			Headline:      fmt.Sprintf("%s demo market event #%d", ticker, sequence),
@@ -80,25 +88,35 @@ func main() {
 			MarketTime:    marketTime,
 		})
 
-		log.Printf("posted demo update batch #%d for %s", sequence, ticker)
+		log.Printf("published demo update batch #%d for %s", sequence, ticker)
 		sequence++
 		time.Sleep(3 * time.Second)
 	}
 }
 
-func postJSON(path string, payload any) {
-	body, err := json.Marshal(payload)
+func kafkaBrokers() []string {
+	env := os.Getenv("KAFKA_BROKERS")
+	if env == "" {
+		env = "localhost:19092"
+	}
+	return strings.Split(env, ",")
+}
+
+func newWriter(brokers []string, topic string) *kafka.Writer {
+	return kafka.NewWriter(kafka.WriterConfig{
+		Brokers:  brokers,
+		Topic:    topic,
+		Balancer: &kafka.LeastBytes{},
+	})
+}
+
+func produce(w *kafka.Writer, payload any) {
+	data, err := json.Marshal(payload)
 	if err != nil {
-		log.Fatalf("failed to encode payload for %s: %v", path, err)
+		log.Fatalf("failed to encode payload for topic %s: %v", w.Stats().Topic, err)
 	}
 
-	resp, err := http.Post(baseURL+path, "application/json", bytes.NewReader(body))
-	if err != nil {
-		log.Fatalf("failed to post to %s: %v", path, err)
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusAccepted {
-		log.Fatalf("post to %s rejected with status: %s", path, resp.Status)
+	if err := w.WriteMessages(context.Background(), kafka.Message{Value: data}); err != nil {
+		log.Fatalf("failed to write to topic %s: %v", w.Stats().Topic, err)
 	}
 }
