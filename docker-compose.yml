@@ -1,6 +1,33 @@
 version: '3.9'
 
 services:
+  redpanda:
+    image: redpandadata/redpanda:v23.3.11
+    container_name: redpanda
+    command:
+      - redpanda
+      - start
+      - --kafka-addr internal://0.0.0.0:9092,external://0.0.0.0:19092
+      - --advertise-kafka-addr internal://redpanda:9092,external://localhost:19092
+      - --overprovisioned
+      - --smp 1
+      - --memory 512M
+      - --reserve-memory 0M
+      - --node-id 0
+      - --check=false
+    environment:
+      - REDPANDA_LOG_LEVEL=warn
+    ports:
+      - "9092:9092"    # internal (container-to-container)
+      - "19092:19092"  # external (host access for local dev/testing)
+    healthcheck:
+      test: ["CMD", "rpk", "cluster", "info", "--brokers", "localhost:9092"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - exchange-network
+
   exchange-server:
     build:
       context: .
@@ -9,9 +36,12 @@ services:
     ports:
       - "8080:8080"
     environment:
-      # Configuration - override these at runtime
       - LISTEN_ADDR=:8080
       - LOG_LEVEL=info
+      - KAFKA_BROKERS=redpanda:9092
+    depends_on:
+      redpanda:
+        condition: service_healthy
     restart: unless-stopped
     networks:
       - exchange-network
