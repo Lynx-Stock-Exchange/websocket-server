@@ -6,10 +6,11 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
 
-	"stock-exchange-ws/internal/httpserver"
+	"stock-exchange-ws/internal/kafkaconsumer"
 	"stock-exchange-ws/internal/services"
 	"stock-exchange-ws/internal/ws"
 
@@ -46,11 +47,29 @@ func (m *OrderService) PlaceOrder(ctx context.Context, req services.PlaceOrderRe
 	}, nil
 }
 
+func kafkaBrokers() []string {
+	env := os.Getenv("KAFKA_BROKERS")
+	if env == "" {
+		env = "localhost:9092"
+	}
+	return strings.Split(env, ",")
+}
+
 func main() {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
 	// Start the HUB
 	hub := ws.NewHub()
 	go hub.Run()
 	log.Println("✓ Hub started")
+
+	// Start Kafka consumers
+	consumer := kafkaconsumer.New(hub, kafkaconsumer.Config{
+		Brokers: kafkaBrokers(),
+	})
+	consumer.Start(ctx)
+	log.Printf("✓ Kafka consumers started (brokers: %s)\n", strings.Join(kafkaBrokers(), ","))
 
 	// Initialize mock services for testing
 	orderService := &OrderService{}
@@ -73,11 +92,9 @@ func main() {
 		SendBufferSize: 256,
 	})
 
-	// Setup HTTP routes
+	// Setup HTTP routes (WebSocket only)
 	mux := http.NewServeMux()
-
 	mux.Handle("/ws", handler)
-	httpserver.NewInternalPushHandler(hub).RegisterRoutes(mux)
 
 	// Start HTTP server
 	listenAddr := ":8080"
@@ -88,11 +105,11 @@ func main() {
 
 	go func() {
 		log.Printf("Starting WebSocket server on ws://localhost:8080/ws\n\n")
-		log.Printf("Internal push endpoints:\n")
-		log.Printf("  POST http://localhost:8080/internal/push/price-update\n")
-		log.Printf("  POST http://localhost:8080/internal/push/order-update\n")
-		log.Printf("  POST http://localhost:8080/internal/push/order-book-update\n")
-		log.Printf("  POST http://localhost:8080/internal/push/market-event\n\n")
+		log.Printf("Kafka topics:\n")
+		log.Printf("  price-updates\n")
+		log.Printf("  order-updates\n")
+		log.Printf("  order-book-updates\n")
+		log.Printf("  market-events\n\n")
 		log.Printf("Test credentials: api_key=test-api-key, api_secret=test-api-secret\n\n")
 		if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 			log.Fatalf("Server error: %v\n", err)
@@ -105,10 +122,13 @@ func main() {
 	<-sigChan
 
 	log.Println("\n\n Shutting down server...")
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
 
-	if err := server.Shutdown(ctx); err != nil {
+	cancel() // stops Kafka consumers
+
+	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer shutdownCancel()
+
+	if err := server.Shutdown(shutdownCtx); err != nil {
 		log.Fatalf("Server shutdown error: %v\n", err)
 	}
 	log.Println("✓ Server stopped")

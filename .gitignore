@@ -9,3 +9,4 @@ coverage.out
 # Go workspace noise.
 *.test
 *.prof
+CLAUDE.md

@@ -1,6 +1,6 @@
 # WebSocket Server
 
-A real-time WebSocket server for the Lynx Stock Exchange platform. It streams live price updates, order status changes, order book depth, and market events to connected trading clients. Internal services push data into the server via a lightweight HTTP endpoint, and the hub broadcasts it instantly to all subscribed WebSocket connections.
+A real-time WebSocket server for the Lynx Stock Exchange platform. It streams live price updates, order status changes, order book depth, and market events to connected trading clients. Internal services publish data to Kafka topics, and the server's consumers broadcast it instantly to all subscribed WebSocket connections.
 
 ---
 
@@ -11,7 +11,8 @@ A real-time WebSocket server for the Lynx Stock Exchange platform. It streams li
 | Language | Go |
 | WebSocket | `github.com/gorilla/websocket` |
 | HTTP Router | Go standard library (`net/http`) |
-| Container | Docker  |
+| Message Broker | Kafka (Redpanda in Docker) |
+| Container | Docker |
 | Orchestration | Docker Compose |
 
 ---
@@ -249,16 +250,24 @@ Send a `PLACE_ORDER` message over the WebSocket:
 
 ---
 
-## Pushing Price Updates (Internal Services)
+## Integration Guide for Internal Services (Kafka)
 
-Internal services — such as a price feed engine — push price updates to the server via HTTP. The server then broadcasts them to all WebSocket clients subscribed to that ticker.
+Internal services — price feed, matching engine, risk engine — publish data directly to Kafka topics. The WebSocket server's consumers pick up each message and broadcast it to the relevant subscribed clients. Your service never calls the WebSocket server directly.
 
-```
-POST http://localhost:8080/internal/push/price-update
-Content-Type: application/json
-```
+### Kafka broker address
 
-Your service seeds this JSON via `HTTP POST` request
+Set the `KAFKA_BROKERS` environment variable in your service to point at the shared broker:
+
+| Environment | Address |
+|---|---|
+| Local (no Docker) | `localhost:9092` |
+| Docker Compose (internal) | `redpanda:9092` |
+
+---
+
+### Topic: `price-updates`
+
+Published by: price feed engine
 
 ```json
 {
@@ -271,26 +280,13 @@ Your service seeds this JSON via `HTTP POST` request
 }
 ```
 
-Responses:
-
-| Status | Meaning |
-|---|---|
-| `202 Accepted` | Update received and queued for broadcast |
-| `400 Bad Request` | Missing ticker or malformed JSON |
-| `500 Internal Server Error` | Hub not initialised |
+Delivered to: all clients subscribed to `PRICE_FEED` for that ticker.
 
 ---
 
-## Pushing Order Updates (Internal Services)
+### Topic: `order-updates`
 
-Internal services — such as an order matching engine — push order status changes to the server via HTTP. The server then delivers them to all WebSocket clients of that platform subscribed to `ORDER_UPDATES`.
-
-```
-POST http://localhost:8080/internal/push/order-update
-Content-Type: application/json
-```
-
-Your service seeds this JSON via `HTTP POST` request
+Published by: matching engine
 
 ```json
 {
@@ -304,27 +300,13 @@ Your service seeds this JSON via `HTTP POST` request
 }
 ```
 
-Responses:
-
-| Status | Meaning |
-|---|---|
-| `202 Accepted` | Update received and queued for delivery |
-| `400 Bad Request` | Missing `platform_id` or malformed JSON |
-| `500 Internal Server Error` | Hub not initialised |
+`platform_id` must be present — the server uses it to route the update only to clients of that platform subscribed to `ORDER_UPDATES`.
 
 ---
 
-## Pushing Order Book Updates (Internal Services)
+### Topic: `order-book-updates`
 
-Internal services — such as a matching engine or book aggregator — push order book snapshots to the server via HTTP. The server then broadcasts them to all WebSocket clients subscribed to `ORDER_BOOK` for that ticker.
-
-```
-POST http://localhost:8080/internal/push/order-book-update
-Content-Type: application/json
-```
-
-Your service seeds this JSON via `HTTP POST` request
-
+Published by: matching engine / book aggregator
 
 ```json
 {
@@ -340,27 +322,13 @@ Your service seeds this JSON via `HTTP POST` request
 }
 ```
 
-Responses:
-
-| Status | Meaning |
-|---|---|
-| `202 Accepted` | Update received and queued for broadcast |
-| `400 Bad Request` | Missing ticker or malformed JSON |
-| `500 Internal Server Error` | Hub not initialised |
+Delivered to: all clients subscribed to `ORDER_BOOK` for that ticker.
 
 ---
 
-## Pushing Market Events (Internal Services)
+### Topic: `market-events`
 
-Internal services — such as a news feed or risk engine — push market-wide events to the server via HTTP. The server then broadcasts them to all WebSocket clients subscribed to `MARKET_EVENTS`.
-
-```
-POST http://localhost:8080/internal/push/market-event
-Content-Type: application/json
-```
-
-Your service seeds this JSON via `HTTP POST` request
-
+Published by: news feed / risk engine
 
 ```json
 {
@@ -375,24 +343,21 @@ Your service seeds this JSON via `HTTP POST` request
 }
 ```
 
-Responses:
+Delivered to: all clients subscribed to `MARKET_EVENTS` (global broadcast).
 
-| Status | Meaning |
-|---|---|
-| `202 Accepted` | Event received and queued for broadcast |
-| `400 Bad Request` | Malformed JSON |
-| `500 Internal Server Error` | Hub not initialised |
+---
 
-**For a working implementation of all of this, see [`cmd/tests/test.go`](cmd/tests/test.go).**
+
+**For a complete working example of all four topics, see [`cmd/tests/test.go`](cmd/tests/test.go).**
 
 ---
 
 ## Run and debug existent tests to help you understand how to connect your service to the Websocket
 
-Make sure the docker container is running, then start the logs
+Make sure the docker container is running and you are in project directory, then start the logs
 
 ```bash
-docker compose logs -f 
+docker compose logs -f exchange-server
 ```
 
 To watch the messages arrive, run one of the test clients in another terminal:
