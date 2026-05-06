@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"log"
 	"net/url"
+	"os"
 
 	"github.com/gorilla/websocket"
 
@@ -29,7 +30,7 @@ func connect() *websocket.Conn {
 		Scheme:   "ws",
 		Host:     "localhost:8080",
 		Path:     "/ws",
-		RawQuery: "api_key=test-api-key&api_secret=test-api-secret",
+		RawQuery: credentialsQuery(),
 	}
 
 	log.Printf("Connecting to %s", u.String())
@@ -39,6 +40,21 @@ func connect() *websocket.Conn {
 	}
 
 	return conn
+}
+
+func credentialsQuery() string {
+	values := url.Values{}
+	values.Set("api_key", envOrDefault("API_KEY", "test-api-key"))
+	values.Set("api_secret", envOrDefault("API_SECRET", "test-api-secret"))
+	return values.Encode()
+}
+
+func envOrDefault(key, fallback string) string {
+	value := os.Getenv(key)
+	if value == "" {
+		return fallback
+	}
+	return value
 }
 
 func readConnected(conn *websocket.Conn) {

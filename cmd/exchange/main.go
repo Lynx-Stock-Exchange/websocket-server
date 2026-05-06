@@ -11,23 +11,12 @@ import (
 	"time"
 
 	"stock-exchange-ws/internal/kafkaconsumer"
+	"stock-exchange-ws/internal/platformauth"
 	"stock-exchange-ws/internal/services"
 	"stock-exchange-ws/internal/ws"
 
 	"github.com/gorilla/websocket"
 )
-
-// Authenticator - accepts fake credentials
-type Authenticator struct{}
-
-// Accept fake credentials for testing
-// will uptade one we have real authentication logic in place from admin panel
-func (a *Authenticator) AuthenticatePlatform(ctx context.Context, creds ws.PlatformCredentials) (ws.AuthenticatedPlatform, error) {
-	if creds.APIKey == "test-api-key" && creds.APISecret == "test-api-secret" {
-		return ws.AuthenticatedPlatform{ID: "platform-xyz"}, nil
-	}
-	return ws.AuthenticatedPlatform{}, ws.ErrUnauthorized
-}
 
 // Market time provider
 type MarketTimeProvider struct{}
@@ -55,6 +44,14 @@ func kafkaBrokers() []string {
 	return strings.Split(env, ",")
 }
 
+func platformAPIURL() string {
+	env := os.Getenv("PLATFORM_API_URL")
+	if env == "" {
+		env = "http://localhost:8000"
+	}
+	return env
+}
+
 func main() {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -71,9 +68,11 @@ func main() {
 	consumer.Start(ctx)
 	log.Printf("✓ Kafka consumers started (brokers: %s)\n", strings.Join(kafkaBrokers(), ","))
 
-	// Initialize mock services for testing
+	// Initialize services
 	orderService := &OrderService{}
-	authenticator := &Authenticator{}
+	authenticator := platformauth.New(platformauth.Config{
+		BaseURL: platformAPIURL(),
+	})
 	marketTimeProvider := &MarketTimeProvider{}
 
 	// Create WebSocket handler
@@ -111,7 +110,7 @@ func main() {
 		log.Printf("  orders.volumes\n")
 		log.Printf("  market.events\n")
 		log.Printf("  market.ticks\n\n")
-		log.Printf("Test credentials: api_key=test-api-key, api_secret=test-api-secret\n\n")
+		log.Printf("Platform auth verify endpoint: %s/internal/platforms/verify\n\n", platformAPIURL())
 		if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 			log.Fatalf("Server error: %v\n", err)
 		}

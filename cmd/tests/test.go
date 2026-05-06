@@ -18,10 +18,7 @@ import (
 	"stock-exchange-ws/internal/ws"
 )
 
-const (
-	platformID = "platform-xyz"
-	ticker     = "AAPL"
-)
+const ticker = "AAPL"
 
 func main() {
 	brokers := kafkaBrokers()
@@ -56,7 +53,7 @@ func main() {
 		})
 
 		produce(writers[kafkaconsumer.TopicOrderUpdates], kafkaconsumer.OrderUpdateMessage{
-			PlatformID:       platformID,
+			PlatformID:       platformID(),
 			OrderID:          fmt.Sprintf("demo-order-%03d", sequence),
 			Status:           "FILLED",
 			FilledQuantity:   10 + sequence,
@@ -92,6 +89,14 @@ func main() {
 		sequence++
 		time.Sleep(3 * time.Second)
 	}
+}
+
+func platformID() string {
+	env := os.Getenv("PLATFORM_ID")
+	if env == "" {
+		return "platform-xyz"
+	}
+	return env
 }
 
 func kafkaBrokers() []string {

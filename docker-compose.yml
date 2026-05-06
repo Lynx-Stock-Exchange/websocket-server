@@ -39,9 +39,12 @@ services:
       - LISTEN_ADDR=:8080
       - LOG_LEVEL=info
       - KAFKA_BROKERS=redpanda:9092
+      - PLATFORM_API_URL=${PLATFORM_API_URL:-http://host.docker.internal:8000}
     depends_on:
       redpanda:
         condition: service_healthy
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     restart: unless-stopped
     networks:
       - exchange-network
