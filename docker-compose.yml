@@ -39,7 +39,12 @@ services:
       - LISTEN_ADDR=:8080
       - LOG_LEVEL=info
       - KAFKA_BROKERS=redpanda:9092
-      - PLATFORM_API_URL=${PLATFORM_API_URL:-http://host.docker.internal:8000}
+      - ORDER_REQUESTS_TOPIC=${ORDER_REQUESTS_TOPIC:-orders.requests}
+      - ORDER_RESPONSES_TOPIC=${ORDER_RESPONSES_TOPIC:-orders.responses}
+      - ORDER_REPLY_TIMEOUT=${ORDER_REPLY_TIMEOUT:-5s}
+      # For a full compose stack where admin-panel is a service, set:
+      # PLATFORM_API_URL=http://admin-panel:8083
+      - PLATFORM_API_URL=${PLATFORM_API_URL:-http://host.docker.internal:8083}
     depends_on:
       redpanda:
         condition: service_healthy
