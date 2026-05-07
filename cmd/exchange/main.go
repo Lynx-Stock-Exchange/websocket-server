@@ -28,16 +28,6 @@ func (m *MarketTimeProvider) ServerMarketTime() string {
 	return time.Now().Format(time.RFC3339)
 }
 
-// Order service fake data for testing
-type OrderService struct{}
-
-func (m *OrderService) PlaceOrder(ctx context.Context, req services.PlaceOrderRequest) (services.PlaceOrderResponse, error) {
-	return services.PlaceOrderResponse{
-		OrderID: "order-number",
-		Status:  "PENDING",
-	}, nil
-}
-
 func kafkaBrokers() []string {
 	env := os.Getenv("KAFKA_BROKERS")
 	if env == "" {
@@ -49,9 +39,31 @@ func kafkaBrokers() []string {
 func platformAPIURL() string {
 	env := os.Getenv("PLATFORM_API_URL")
 	if env == "" {
-		env = "http://localhost:8000"
+		env = "http://localhost:8083"
 	}
 	return env
+}
+
+func envOrDefault(name, fallback string) string {
+	value := strings.TrimSpace(os.Getenv(name))
+	if value == "" {
+		return fallback
+	}
+	return value
+}
+
+func durationEnvOrDefault(name string, fallback time.Duration) time.Duration {
+	value := strings.TrimSpace(os.Getenv(name))
+	if value == "" {
+		return fallback
+	}
+
+	duration, err := time.ParseDuration(value)
+	if err != nil {
+		log.Printf("invalid %s=%q, using %s", name, value, fallback)
+		return fallback
+	}
+	return duration
 }
 
 func syncActivePlatforms(ctx context.Context, authenticator *auth.Authenticator, hub *ws.Hub) {
@@ -91,7 +103,15 @@ func main() {
 	log.Printf("✓ Kafka consumers started (brokers: %s)\n", strings.Join(kafkaBrokers(), ","))
 
 	// Initialize services
-	orderService := &OrderService{}
+	orderService := services.NewKafkaOrderService(services.KafkaOrderConfig{
+		Brokers:        kafkaBrokers(),
+		RequestsTopic:  envOrDefault("ORDER_REQUESTS_TOPIC", services.DefaultOrderRequestsTopic),
+		ResponsesTopic: envOrDefault("ORDER_RESPONSES_TOPIC", services.DefaultOrderResponsesTopic),
+		ResponseGroup:  envOrDefault("ORDER_RESPONSES_GROUP", "websocket-order-replies"),
+		ReplyTimeout:   durationEnvOrDefault("ORDER_REPLY_TIMEOUT", services.DefaultOrderReplyTimeout),
+	})
+	orderService.Start(ctx)
+	defer orderService.Close()
 	authenticator := auth.New(platformAPIURL())
 	marketTimeProvider := &MarketTimeProvider{}
 	go syncActivePlatforms(ctx, authenticator, hub)
@@ -131,6 +151,8 @@ func main() {
 		log.Printf("  orders.volumes\n")
 		log.Printf("  market.events\n")
 		log.Printf("  market.ticks\n\n")
+		log.Printf("Order request topic: %s\n", envOrDefault("ORDER_REQUESTS_TOPIC", services.DefaultOrderRequestsTopic))
+		log.Printf("Order response topic: %s\n", envOrDefault("ORDER_RESPONSES_TOPIC", services.DefaultOrderResponsesTopic))
 		log.Printf("Platform auth verify endpoint: %s/internal/platforms/verify\n\n", platformAPIURL())
 		if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 			log.Fatalf("Server error: %v\n", err)
