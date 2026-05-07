@@ -40,7 +40,7 @@ services:
       - LOG_LEVEL=info
       - KAFKA_BROKERS=redpanda:9092
       - ORDER_REQUESTS_TOPIC=${ORDER_REQUESTS_TOPIC:-orders.requests}
-      - ORDER_RESPONSES_TOPIC=${ORDER_RESPONSES_TOPIC:-orders.responses}
+      - ORDER_RESPONSES_TOPIC=${ORDER_RESPONSES_TOPIC:-orders.updates}
       - ORDER_REPLY_TIMEOUT=${ORDER_REPLY_TIMEOUT:-5s}
       # For a full compose stack where admin-panel is a service, set:
       # PLATFORM_API_URL=http://admin-panel:8083

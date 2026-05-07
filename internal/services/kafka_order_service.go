@@ -16,7 +16,7 @@ import (
 
 const (
 	DefaultOrderRequestsTopic  = "orders.requests"
-	DefaultOrderResponsesTopic = "orders.responses"
+	DefaultOrderResponsesTopic = "orders.updates"
 	DefaultOrderReplyTimeout   = 5 * time.Second
 	defaultOrderReplyGroup     = "websocket-order-replies"
 )
@@ -66,6 +66,11 @@ type orderResponse struct {
 	Status  string `json:"status,omitempty"`
 	Code    string `json:"code,omitempty"`
 	Message string `json:"message,omitempty"`
+}
+
+type orderResponseEnvelope struct {
+	Type    string        `json:"type"`
+	Payload orderResponse `json:"payload"`
 }
 
 type OrderPlacementError struct {
@@ -224,7 +229,7 @@ func (s *KafkaOrderService) consumeResponses(ctx context.Context) {
 			if ctx.Err() != nil {
 				return
 			}
-			log.Printf("orders.responses: read error: %v", err)
+			log.Printf("%s: read error: %v", DefaultOrderResponsesTopic, err)
 			continue
 		}
 
@@ -235,23 +240,36 @@ func (s *KafkaOrderService) consumeResponses(ctx context.Context) {
 func (s *KafkaOrderService) handleOrderResponse(key []byte, data []byte) {
 	correlationID := strings.TrimSpace(string(key))
 	if correlationID == "" {
-		log.Printf("orders.responses: missing Kafka key, skipping")
-		return
-	}
-
-	var response orderResponse
-	if err := json.Unmarshal(data, &response); err != nil {
-		log.Printf("orders.responses: invalid message: %v", err)
+		log.Printf("%s: missing Kafka key, skipping", DefaultOrderResponsesTopic)
 		return
 	}
 
 	responseCh := s.takePending(correlationID)
 	if responseCh == nil {
-		log.Printf("orders.responses: no pending websocket request for correlation id %s", correlationID)
+		log.Printf("%s: no pending websocket request for correlation id %s", DefaultOrderResponsesTopic, correlationID)
+		return
+	}
+
+	response, err := parseOrderResponse(data)
+	if err != nil {
+		log.Printf("%s: invalid message for correlation id %s: %v", DefaultOrderResponsesTopic, correlationID, err)
 		return
 	}
 
 	responseCh <- response
+}
+
+func parseOrderResponse(data []byte) (orderResponse, error) {
+	var envelope orderResponseEnvelope
+	if err := json.Unmarshal(data, &envelope); err == nil && strings.TrimSpace(envelope.Type) != "" {
+		return envelope.Payload, nil
+	}
+
+	var response orderResponse
+	if err := json.Unmarshal(data, &response); err != nil {
+		return orderResponse{}, err
+	}
+	return response, nil
 }
 
 func (s *KafkaOrderService) registerPending(correlationID string, responseCh chan orderResponse) {

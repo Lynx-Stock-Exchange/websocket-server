@@ -33,6 +33,12 @@ func (f *fakeKafkaWriter) Close() error {
 	return nil
 }
 
+func TestKafkaOrderServiceDefaultResponseTopicUsesOrderUpdates(t *testing.T) {
+	if DefaultOrderResponsesTopic != "orders.updates" {
+		t.Fatalf("DefaultOrderResponsesTopic = %q, want orders.updates", DefaultOrderResponsesTopic)
+	}
+}
+
 func TestKafkaOrderServicePublishesExactEnginePayloadAndWaitsForAck(t *testing.T) {
 	writer := newFakeKafkaWriter()
 	service := newKafkaOrderService(writer, nil, "orders.requests", time.Second)
@@ -278,7 +284,15 @@ func TestKafkaOrderServicePublishFailureReturnsUnavailable(t *testing.T) {
 func mustMarshalOrderResponse(t *testing.T, response orderResponse) []byte {
 	t.Helper()
 
-	data, err := json.Marshal(response)
+	messageType := "ORDER_UPDATE"
+	if response.Code != "" {
+		messageType = "ORDER_REJECTED"
+	}
+
+	data, err := json.Marshal(orderResponseEnvelope{
+		Type:    messageType,
+		Payload: response,
+	})
 	if err != nil {
 		t.Fatalf("json.Marshal returned %v", err)
 	}

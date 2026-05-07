@@ -77,6 +77,11 @@ type OrderUpdateMessage struct {
 	MarketTime       string  `json:"market_time"`
 }
 
+type orderUpdateEnvelope struct {
+	Type    string             `json:"type"`
+	Payload OrderUpdateMessage `json:"payload"`
+}
+
 func (c *Consumer) handlePriceUpdate(data []byte) {
 	var payload ws.PriceUpdatePayload
 	if err := json.Unmarshal(data, &payload); err != nil {
@@ -92,8 +97,8 @@ func (c *Consumer) handlePriceUpdate(data []byte) {
 }
 
 func (c *Consumer) handleOrderUpdate(data []byte) {
-	var msg OrderUpdateMessage
-	if err := json.Unmarshal(data, &msg); err != nil {
+	msg, err := parseOrderUpdate(data)
+	if err != nil {
 		log.Printf("orders.updates: invalid message: %v", err)
 		return
 	}
@@ -110,6 +115,19 @@ func (c *Consumer) handleOrderUpdate(data []byte) {
 		ExchangeFee:      msg.ExchangeFee,
 		MarketTime:       msg.MarketTime,
 	})
+}
+
+func parseOrderUpdate(data []byte) (OrderUpdateMessage, error) {
+	var envelope orderUpdateEnvelope
+	if err := json.Unmarshal(data, &envelope); err == nil && strings.TrimSpace(envelope.Type) != "" {
+		return envelope.Payload, nil
+	}
+
+	var msg OrderUpdateMessage
+	if err := json.Unmarshal(data, &msg); err != nil {
+		return OrderUpdateMessage{}, err
+	}
+	return msg, nil
 }
 
 func (c *Consumer) handleOrderBookUpdate(data []byte) {
