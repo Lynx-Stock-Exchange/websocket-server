@@ -45,8 +45,14 @@ type KafkaOrderService struct {
 	requestsTopic string
 	replyTimeout  time.Duration
 
-	mu      sync.Mutex
-	pending map[string]chan orderResponse
+	mu            sync.Mutex
+	pending       map[string]pendingOrder
+	pendingByUser map[string]string
+}
+
+type pendingOrder struct {
+	responseCh chan orderResponse
+	userKey    string
 }
 
 type orderRequestMessage struct {
@@ -62,10 +68,13 @@ type orderRequestMessage struct {
 }
 
 type orderResponse struct {
-	OrderID string `json:"order_id"`
-	Status  string `json:"status,omitempty"`
-	Code    string `json:"code,omitempty"`
-	Message string `json:"message,omitempty"`
+	PlatformID      string `json:"platform_id,omitempty"`
+	PlatformUserID  string `json:"platform_user_id,omitempty"`
+	OrderID         string `json:"order_id"`
+	Status          string `json:"status,omitempty"`
+	Code            string `json:"code,omitempty"`
+	Message         string `json:"message,omitempty"`
+	RejectionReason string `json:"rejection_reason,omitempty"`
 }
 
 type orderResponseEnvelope struct {
@@ -147,7 +156,8 @@ func newKafkaOrderService(writer kafkaMessageWriter, reader kafkaMessageReader, 
 		reader:        reader,
 		requestsTopic: requestsTopic,
 		replyTimeout:  replyTimeout,
-		pending:       make(map[string]chan orderResponse),
+		pending:       make(map[string]pendingOrder),
+		pendingByUser: make(map[string]string),
 	}
 }
 
@@ -183,7 +193,9 @@ func (s *KafkaOrderService) PlaceOrder(ctx context.Context, req PlaceOrderReques
 	}
 
 	responseCh := make(chan orderResponse, 1)
-	s.registerPending(correlationID, responseCh)
+	if err := s.registerPending(correlationID, orderUserKey(req.PlatformID, req.PlatformUserID), responseCh); err != nil {
+		return PlaceOrderResponse{}, err
+	}
 	defer s.unregisterPending(correlationID)
 
 	messageBody, err := json.Marshal(orderRequestMessage{
@@ -239,20 +251,18 @@ func (s *KafkaOrderService) consumeResponses(ctx context.Context) {
 
 func (s *KafkaOrderService) handleOrderResponse(key []byte, data []byte) {
 	correlationID := strings.TrimSpace(string(key))
-	if correlationID == "" {
-		log.Printf("%s: missing Kafka key, skipping", DefaultOrderResponsesTopic)
+	response, err := parseOrderResponse(data)
+	if err != nil {
+		log.Printf("%s: invalid message for correlation id %s: %v", DefaultOrderResponsesTopic, correlationID, err)
 		return
 	}
 
 	responseCh := s.takePending(correlationID)
 	if responseCh == nil {
-		log.Printf("%s: no pending websocket request for correlation id %s", DefaultOrderResponsesTopic, correlationID)
-		return
+		responseCh = s.takePendingByUserKey(orderUserKey(response.PlatformID, response.PlatformUserID))
 	}
-
-	response, err := parseOrderResponse(data)
-	if err != nil {
-		log.Printf("%s: invalid message for correlation id %s: %v", DefaultOrderResponsesTopic, correlationID, err)
+	if responseCh == nil {
+		log.Printf("%s: no pending websocket request for correlation id %s", DefaultOrderResponsesTopic, correlationID)
 		return
 	}
 
@@ -272,32 +282,74 @@ func parseOrderResponse(data []byte) (orderResponse, error) {
 	return response, nil
 }
 
-func (s *KafkaOrderService) registerPending(correlationID string, responseCh chan orderResponse) {
+func (s *KafkaOrderService) registerPending(correlationID, userKey string, responseCh chan orderResponse) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	s.pending[correlationID] = responseCh
+
+	if userKey != "" {
+		if _, exists := s.pendingByUser[userKey]; exists {
+			return OrderPlacementError{
+				Code:    "ORDER_ALREADY_PENDING",
+				Message: "another order is already pending for this platform user",
+			}
+		}
+		s.pendingByUser[userKey] = correlationID
+	}
+
+	s.pending[correlationID] = pendingOrder{
+		responseCh: responseCh,
+		userKey:    userKey,
+	}
+	return nil
 }
 
 func (s *KafkaOrderService) unregisterPending(correlationID string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	delete(s.pending, correlationID)
+	s.takePendingLocked(correlationID)
 }
 
 func (s *KafkaOrderService) takePending(correlationID string) chan orderResponse {
+	if strings.TrimSpace(correlationID) == "" {
+		return nil
+	}
+
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	responseCh := s.pending[correlationID]
+	return s.takePendingLocked(correlationID)
+}
+
+func (s *KafkaOrderService) takePendingByUserKey(userKey string) chan orderResponse {
+	if strings.TrimSpace(userKey) == "" {
+		return nil
+	}
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	correlationID := s.pendingByUser[userKey]
+	return s.takePendingLocked(correlationID)
+}
+
+func (s *KafkaOrderService) takePendingLocked(correlationID string) chan orderResponse {
+	pending, ok := s.pending[correlationID]
+	if !ok {
+		return nil
+	}
+
 	delete(s.pending, correlationID)
-	return responseCh
+	if pending.userKey != "" {
+		delete(s.pendingByUser, pending.userKey)
+	}
+	return pending.responseCh
 }
 
 func placeOrderResponseFromKafka(response orderResponse) (PlaceOrderResponse, error) {
 	if response.Code != "" {
 		message := response.Message
 		if message == "" {
-			message = "order rejected"
+			message = rejectionMessage(response.Code)
 		}
 		return PlaceOrderResponse{}, OrderPlacementError{
 			Code:    response.Code,
@@ -306,6 +358,20 @@ func placeOrderResponseFromKafka(response orderResponse) (PlaceOrderResponse, er
 	}
 
 	status := strings.TrimSpace(response.Status)
+	if strings.EqualFold(status, "REJECTED") {
+		code := strings.TrimSpace(response.RejectionReason)
+		if code == "" {
+			code = "ORDER_REJECTED"
+		}
+		message := response.Message
+		if message == "" {
+			message = rejectionMessage(code)
+		}
+		return PlaceOrderResponse{}, OrderPlacementError{
+			Code:    code,
+			Message: message,
+		}
+	}
 	if status == "" {
 		status = "PENDING"
 	}
@@ -334,4 +400,36 @@ func newCorrelationID() (string, error) {
 	}
 
 	return "ws-order-" + hex.EncodeToString(bytes[:]), nil
+}
+
+func orderUserKey(platformID, platformUserID string) string {
+	platformID = strings.TrimSpace(platformID)
+	platformUserID = strings.TrimSpace(platformUserID)
+	if platformID == "" || platformUserID == "" {
+		return ""
+	}
+	return platformID + "\x00" + platformUserID
+}
+
+func rejectionMessage(code string) string {
+	switch strings.TrimSpace(code) {
+	case "MARKET_CLOSED":
+		return "Market is currently closed."
+	case "INVALID_SIDE":
+		return "Order side is invalid."
+	case "INVALID_QUANTITY":
+		return "Order quantity is invalid."
+	case "ORDER_SIZE_EXCEEDED":
+		return "Order size exceeds the allowed limit."
+	case "INVALID_TICKER":
+		return "Instrument is not available."
+	case "INVALID_ORDER_TYPE":
+		return "Order type is invalid."
+	case "INVALID_LIMIT_PRICE":
+		return "Limit price is invalid."
+	case "":
+		return "Order rejected."
+	default:
+		return "Order rejected: " + code
+	}
 }

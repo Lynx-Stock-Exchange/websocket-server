@@ -82,6 +82,11 @@ type orderUpdateEnvelope struct {
 	Payload OrderUpdateMessage `json:"payload"`
 }
 
+type marketEventEnvelope struct {
+	Type    string                `json:"type"`
+	Payload ws.MarketEventPayload `json:"payload"`
+}
+
 func (c *Consumer) handlePriceUpdate(data []byte) {
 	var payload ws.PriceUpdatePayload
 	if err := json.Unmarshal(data, &payload); err != nil {
@@ -145,10 +150,23 @@ func (c *Consumer) handleOrderBookUpdate(data []byte) {
 }
 
 func (c *Consumer) handleMarketEvent(data []byte) {
-	var payload ws.MarketEventPayload
-	if err := json.Unmarshal(data, &payload); err != nil {
+	payload, err := parseMarketEvent(data)
+	if err != nil {
 		log.Printf("market.events: invalid message: %v", err)
 		return
 	}
 	c.hub.PublishMarketEvent(payload)
+}
+
+func parseMarketEvent(data []byte) (ws.MarketEventPayload, error) {
+	var envelope marketEventEnvelope
+	if err := json.Unmarshal(data, &envelope); err == nil && strings.TrimSpace(envelope.Type) != "" {
+		return envelope.Payload, nil
+	}
+
+	var payload ws.MarketEventPayload
+	if err := json.Unmarshal(data, &payload); err != nil {
+		return ws.MarketEventPayload{}, err
+	}
+	return payload, nil
 }

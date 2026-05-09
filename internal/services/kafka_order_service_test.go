@@ -193,6 +193,156 @@ func TestKafkaOrderServiceCorrelatesResponseByKafkaKey(t *testing.T) {
 	}
 }
 
+func TestKafkaOrderServiceCorrelatesEngineOrderUpdateByPlatformUser(t *testing.T) {
+	writer := newFakeKafkaWriter()
+	service := newKafkaOrderService(writer, nil, "orders.requests", time.Second)
+
+	resultCh := make(chan PlaceOrderResponse, 1)
+	errCh := make(chan error, 1)
+	go func() {
+		resp, err := service.PlaceOrder(context.Background(), PlaceOrderRequest{
+			PlatformID:     "platform-1",
+			PlatformUserID: "user-1",
+			InstrumentType: "STOCK",
+			InstrumentID:   "ARKA",
+			OrderType:      "MARKET",
+			Side:           "BUY",
+			Quantity:       10,
+		})
+		if err != nil {
+			errCh <- err
+			return
+		}
+		resultCh <- resp
+	}()
+
+	<-writer.messages
+	service.handleOrderResponse([]byte("ord-456"), mustMarshalOrderResponse(t, orderResponse{
+		PlatformID:     "platform-1",
+		PlatformUserID: "user-1",
+		OrderID:        "ord-456",
+		Status:         "PENDING",
+	}))
+
+	select {
+	case err := <-errCh:
+		t.Fatalf("PlaceOrder returned error: %v", err)
+	case resp := <-resultCh:
+		if resp.OrderID != "ord-456" || resp.Status != "PENDING" {
+			t.Fatalf("response = %#v", resp)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("timed out waiting for PlaceOrder response")
+	}
+}
+
+func TestKafkaOrderServiceReturnsRejectedOrderUpdate(t *testing.T) {
+	writer := newFakeKafkaWriter()
+	service := newKafkaOrderService(writer, nil, "orders.requests", time.Second)
+
+	errCh := make(chan error, 1)
+	go func() {
+		_, err := service.PlaceOrder(context.Background(), PlaceOrderRequest{
+			PlatformID:     "platform-1",
+			PlatformUserID: "user-1",
+			InstrumentType: "STOCK",
+			InstrumentID:   "ARKA",
+			OrderType:      "MARKET",
+			Side:           "BUY",
+			Quantity:       10,
+		})
+		errCh <- err
+	}()
+
+	<-writer.messages
+	service.handleOrderResponse([]byte("ord-456"), mustMarshalOrderResponse(t, orderResponse{
+		PlatformID:      "platform-1",
+		PlatformUserID:  "user-1",
+		OrderID:         "ord-456",
+		Status:          "REJECTED",
+		RejectionReason: "MARKET_CLOSED",
+	}))
+
+	err := <-errCh
+	if err == nil {
+		t.Fatal("PlaceOrder returned nil error, want rejection")
+	}
+	var placementErr OrderPlacementError
+	if !errors.As(err, &placementErr) {
+		t.Fatalf("error type = %T, want OrderPlacementError", err)
+	}
+	if placementErr.RejectionCode() != "MARKET_CLOSED" || placementErr.Error() != "Market is currently closed." {
+		t.Fatalf("rejection = %#v", placementErr)
+	}
+}
+
+func TestKafkaOrderServiceRejectsConcurrentOrderForSamePlatformUser(t *testing.T) {
+	writer := newFakeKafkaWriter()
+	service := newKafkaOrderService(writer, nil, "orders.requests", time.Second)
+
+	firstResultCh := make(chan PlaceOrderResponse, 1)
+	firstErrCh := make(chan error, 1)
+	go func() {
+		resp, err := service.PlaceOrder(context.Background(), PlaceOrderRequest{
+			PlatformID:     "platform-1",
+			PlatformUserID: "user-1",
+			InstrumentType: "STOCK",
+			InstrumentID:   "ARKA",
+			OrderType:      "MARKET",
+			Side:           "BUY",
+			Quantity:       10,
+		})
+		if err != nil {
+			firstErrCh <- err
+			return
+		}
+		firstResultCh <- resp
+	}()
+
+	firstMsg := <-writer.messages
+	_, err := service.PlaceOrder(context.Background(), PlaceOrderRequest{
+		PlatformID:     "platform-1",
+		PlatformUserID: "user-1",
+		InstrumentType: "STOCK",
+		InstrumentID:   "ARKA",
+		OrderType:      "MARKET",
+		Side:           "BUY",
+		Quantity:       10,
+	})
+	if err == nil {
+		t.Fatal("second PlaceOrder returned nil error, want duplicate rejection")
+	}
+	var placementErr OrderPlacementError
+	if !errors.As(err, &placementErr) {
+		t.Fatalf("error type = %T, want OrderPlacementError", err)
+	}
+	if placementErr.RejectionCode() != "ORDER_ALREADY_PENDING" {
+		t.Fatalf("rejection code = %q", placementErr.RejectionCode())
+	}
+
+	select {
+	case msg := <-writer.messages:
+		t.Fatalf("unexpected second Kafka publish: %#v", msg)
+	default:
+	}
+
+	service.handleOrderResponse(firstMsg.Key, mustMarshalOrderResponse(t, orderResponse{
+		OrderID: "ord-456",
+		Status:  "PENDING",
+	}))
+
+	select {
+	case err := <-firstErrCh:
+		t.Fatalf("first PlaceOrder returned error: %v", err)
+	case resp := <-firstResultCh:
+		if resp.OrderID != "ord-456" || resp.Status != "PENDING" {
+			t.Fatalf("first response = %#v", resp)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("timed out waiting for first PlaceOrder response")
+	}
+}
+
 func TestKafkaOrderServiceReturnsEngineRejection(t *testing.T) {
 	writer := newFakeKafkaWriter()
 	service := newKafkaOrderService(writer, nil, "orders.requests", time.Second)
