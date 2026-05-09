@@ -88,11 +88,14 @@ type marketEventEnvelope struct {
 }
 
 func (c *Consumer) handlePriceUpdate(data []byte) {
-	var payload ws.PriceUpdatePayload
-	if err := json.Unmarshal(data, &payload); err != nil {
+	var envelope struct {
+		Payload ws.PriceUpdatePayload `json:"payload"`
+	}
+	if err := json.Unmarshal(data, &envelope); err != nil {
 		log.Printf("stock.prices: invalid message: %v", err)
 		return
 	}
+	payload := envelope.Payload
 	payload.Ticker = strings.ToUpper(strings.TrimSpace(payload.Ticker))
 	if payload.Ticker == "" {
 		log.Println("stock.prices: missing ticker, skipping")
@@ -102,11 +105,14 @@ func (c *Consumer) handlePriceUpdate(data []byte) {
 }
 
 func (c *Consumer) handleOrderUpdate(data []byte) {
-	msg, err := parseOrderUpdate(data)
-	if err != nil {
+	var envelope struct {
+		Payload OrderUpdateMessage `json:"payload"`
+	}
+	if err := json.Unmarshal(data, &envelope); err != nil {
 		log.Printf("orders.updates: invalid message: %v", err)
 		return
 	}
+	msg := envelope.Payload
 	msg.PlatformID = strings.TrimSpace(msg.PlatformID)
 	if msg.PlatformID == "" {
 		log.Println("orders.updates: missing platform_id, skipping")
