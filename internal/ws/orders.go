@@ -18,6 +18,7 @@ func (c *Client) handlePlaceOrder(raw json.RawMessage) bool {
 	normalizePlaceOrder(&payload)
 	if err := validatePlaceOrder(payload); err != nil {
 		c.hub.Send(c, NewEnvelope(MessageOrderRejected, OrderRejectedPayload{
+			OrderID: payload.OrderID,
 			Code:    "INVALID_ORDER",
 			Message: err.Error(),
 		}))
@@ -26,6 +27,7 @@ func (c *Client) handlePlaceOrder(raw json.RawMessage) bool {
 
 	if c.orderService == nil {
 		c.hub.Send(c, NewEnvelope(MessageOrderRejected, OrderRejectedPayload{
+			OrderID: payload.OrderID,
 			Code:    "ORDER_SERVICE_UNAVAILABLE",
 			Message: "order placement service is not wired yet",
 		}))
@@ -33,6 +35,7 @@ func (c *Client) handlePlaceOrder(raw json.RawMessage) bool {
 	}
 
 	resp, err := c.orderService.PlaceOrder(context.Background(), services.PlaceOrderRequest{
+		OrderID:        payload.OrderID,
 		PlatformID:     c.platformID,
 		PlatformUserID: payload.PlatformUserID,
 		InstrumentType: payload.InstrumentType,
@@ -45,6 +48,7 @@ func (c *Client) handlePlaceOrder(raw json.RawMessage) bool {
 	})
 	if err != nil {
 		c.hub.Send(c, NewEnvelope(MessageOrderRejected, OrderRejectedPayload{
+			OrderID: payload.OrderID,
 			Code:    rejectionCode(err),
 			Message: err.Error(),
 		}))

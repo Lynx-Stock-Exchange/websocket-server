@@ -69,6 +69,7 @@ func (c *Consumer) consume(ctx context.Context, topic string, handler func([]byt
 // consumer can route updates to the correct platform without key inspection.
 type OrderUpdateMessage struct {
 	PlatformID       string  `json:"platform_id"`
+	PlatformUserID   string  `json:"platform_user_id"`
 	OrderID          string  `json:"order_id"`
 	Status           string  `json:"status"`
 	FilledQuantity   int64   `json:"filled_quantity"`
@@ -104,6 +105,7 @@ func (c *Consumer) handleOrderUpdate(data []byte) {
 	}
 	c.hub.PublishOrderUpdate(msg.PlatformID, ws.OrderUpdatePayload{
 		OrderID:          msg.OrderID,
+		PlatformUserID:   msg.PlatformUserID,
 		Status:           msg.Status,
 		FilledQuantity:   msg.FilledQuantity,
 		AverageFillPrice: msg.AverageFillPrice,

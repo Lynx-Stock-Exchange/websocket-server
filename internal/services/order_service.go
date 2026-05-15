@@ -7,6 +7,7 @@ import "context"
 // The response must be asynchronous on that connection as ORDER_ACK or ORDER_REJECTED.
 
 type PlaceOrderRequest struct {
+	OrderID        string
 	PlatformID     string
 	PlatformUserID string
 	InstrumentType string

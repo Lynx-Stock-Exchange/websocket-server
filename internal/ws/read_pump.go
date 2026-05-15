@@ -44,8 +44,9 @@ func (c *Client) readPump() {
 			if !c.handlePlaceOrder(envelope.Payload) {
 				return
 			}
+
 		default:
-			return
+			log.Printf("Ignoring unrecognised message type from %s: %s", c.platformID, envelope.Type)
 		}
 	}
 }

@@ -57,6 +57,7 @@ type PriceUpdatePayload struct {
 
 type OrderUpdatePayload struct {
 	OrderID          string  `json:"order_id"`
+	PlatformUserID   string  `json:"platform_user_id,omitempty"`
 	Status           string  `json:"status"`
 	FilledQuantity   int64   `json:"filled_quantity"`
 	AverageFillPrice float64 `json:"average_fill_price"`
@@ -78,6 +79,7 @@ type OrderBookUpdatePayload struct {
 type MarketEventPayload struct {
 	EventID       string  `json:"event_id"`
 	EventType     string  `json:"event_type"`
+	IsOpen        *bool   `json:"is_open,omitempty"`
 	Headline      string  `json:"headline"`
 	Scope         string  `json:"scope"`
 	Target        string  `json:"target"`
@@ -87,6 +89,7 @@ type MarketEventPayload struct {
 }
 
 type PlaceOrderPayload struct {
+	OrderID        string   `json:"order_id"`
 	PlatformUserID string   `json:"platform_user_id"`
 	InstrumentType string   `json:"instrument_type"`
 	InstrumentID   string   `json:"instrument_id"`
@@ -103,6 +106,7 @@ type OrderAckPayload struct {
 }
 
 type OrderRejectedPayload struct {
+	OrderID string `json:"order_id"`
 	Code    string `json:"code"`
 	Message string `json:"message"`
 }

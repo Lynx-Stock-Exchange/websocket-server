@@ -2,6 +2,8 @@ package main
 
 import (
 	"context"
+	"encoding/json"
+	"fmt"
 	"log"
 	"net/http"
 	"os"
@@ -16,6 +18,7 @@ import (
 	"stock-exchange-ws/internal/ws"
 
 	"github.com/gorilla/websocket"
+	kafka "github.com/segmentio/kafka-go"
 )
 
 const activePlatformsPollInterval = 3 * time.Second
@@ -24,16 +27,74 @@ const activePlatformsPollInterval = 3 * time.Second
 type MarketTimeProvider struct{}
 
 func (m *MarketTimeProvider) ServerMarketTime() string {
-	// this will change with further implementation of real market time logic
 	return time.Now().Format(time.RFC3339)
 }
 
-// Order service fake data for testing
-type OrderService struct{}
+// kafkaRejection implements the rejectionCoder interface used by orders.go.
+type kafkaRejection struct {
+	code    string
+	message string
+}
 
-func (m *OrderService) PlaceOrder(ctx context.Context, req services.PlaceOrderRequest) (services.PlaceOrderResponse, error) {
+func (e *kafkaRejection) Error() string         { return e.message }
+func (e *kafkaRejection) RejectionCode() string { return e.code }
+
+// OrderService publishes incoming PLACE_ORDER requests to the orders.requests
+// Kafka topic so the order-book-engine can consume and persist them.
+// It returns an ORDER_ACK immediately with the broker's own order_id; the
+// actual fill/partial-fill updates arrive later via the orders.updates topic.
+type OrderService struct {
+	writer *kafka.Writer
+}
+
+func newOrderService(brokers []string) *OrderService {
+	return &OrderService{
+		writer: &kafka.Writer{
+			Addr:     kafka.TCP(brokers...),
+			Topic:    "orders.requests",
+			Balancer: &kafka.LeastBytes{},
+		},
+	}
+}
+
+func (s *OrderService) PlaceOrder(ctx context.Context, req services.PlaceOrderRequest) (services.PlaceOrderResponse, error) {
+	payload := map[string]any{
+		"order_id":         req.OrderID,
+		"platform_id":      req.PlatformID,
+		"platform_user_id": req.PlatformUserID,
+		"instrument_type":  req.InstrumentType,
+		"instrument_id":    req.InstrumentID,
+		"order_type":       req.OrderType,
+		"side":             req.Side,
+		"quantity":         req.Quantity,
+	}
+	if req.LimitPrice != nil {
+		payload["limit_price"] = *req.LimitPrice
+	}
+	if req.ExpiresAt != nil {
+		payload["expires_at"] = *req.ExpiresAt
+	}
+
+	body, err := json.Marshal(payload)
+	if err != nil {
+		return services.PlaceOrderResponse{}, fmt.Errorf("failed to marshal order: %w", err)
+	}
+
+	if err := s.writer.WriteMessages(ctx, kafka.Message{
+		Key:   []byte(req.OrderID),
+		Value: body,
+	}); err != nil {
+		return services.PlaceOrderResponse{}, &kafkaRejection{
+			code:    "KAFKA_UNAVAILABLE",
+			message: fmt.Sprintf("failed to publish order: %v", err),
+		}
+	}
+
+	log.Printf("Order %s published to orders.requests (platform=%s instrument=%s side=%s qty=%d)",
+		req.OrderID, req.PlatformID, req.InstrumentID, req.Side, req.Quantity)
+
 	return services.PlaceOrderResponse{
-		OrderID: "order-number",
+		OrderID: req.OrderID,
 		Status:  "PENDING",
 	}, nil
 }
@@ -78,6 +139,8 @@ func main() {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
+	brokers := kafkaBrokers()
+
 	// Start the HUB
 	hub := ws.NewHub()
 	go hub.Run()
@@ -85,13 +148,13 @@ func main() {
 
 	// Start Kafka consumers
 	consumer := kafkaconsumer.New(hub, kafkaconsumer.Config{
-		Brokers: kafkaBrokers(),
+		Brokers: brokers,
 	})
 	consumer.Start(ctx)
-	log.Printf("✓ Kafka consumers started (brokers: %s)\n", strings.Join(kafkaBrokers(), ","))
+	log.Printf("✓ Kafka consumers started (brokers: %s)\n", strings.Join(brokers, ","))
 
 	// Initialize services
-	orderService := &OrderService{}
+	orderService := newOrderService(brokers)
 	authenticator := auth.New(platformAPIURL())
 	marketTimeProvider := &MarketTimeProvider{}
 	go syncActivePlatforms(ctx, authenticator, hub)
@@ -106,7 +169,7 @@ func main() {
 			ReadBufferSize:  1024,
 			WriteBufferSize: 1024,
 			CheckOrigin: func(r *http.Request) bool {
-				return true // Allow all origins for testing
+				return true
 			},
 		},
 		SendBufferSize: 256,
@@ -116,7 +179,6 @@ func main() {
 	mux := http.NewServeMux()
 	mux.Handle("/ws", handler)
 
-	// Start HTTP server
 	listenAddr := ":8080"
 	server := &http.Server{
 		Addr:    listenAddr,
@@ -126,25 +188,24 @@ func main() {
 	go func() {
 		log.Printf("Starting WebSocket server on ws://localhost:8080/ws\n\n")
 		log.Printf("Kafka topics:\n")
-		log.Printf("  stock.prices\n")
-		log.Printf("  orders.updates\n")
-		log.Printf("  orders.volumes\n")
-		log.Printf("  market.events\n")
-		log.Printf("  market.ticks\n\n")
+		log.Printf("  orders.requests  (producer)\n")
+		log.Printf("  orders.updates   (consumer)\n")
+		log.Printf("  stock.prices     (consumer)\n")
+		log.Printf("  orders.volumes   (consumer)\n")
+		log.Printf("  market.events    (consumer)\n")
+		log.Printf("  market.ticks     (consumer)\n\n")
 		log.Printf("Platform auth verify endpoint: %s/internal/platforms/verify\n\n", platformAPIURL())
 		if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 			log.Fatalf("Server error: %v\n", err)
 		}
 	}()
 
-	// shutdown
 	sigChan := make(chan os.Signal, 1)
 	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
 	<-sigChan
 
 	log.Println("\n\n Shutting down server...")
-
-	cancel() // stops Kafka consumers
+	cancel()
 
 	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer shutdownCancel()
@@ -152,5 +213,6 @@ func main() {
 	if err := server.Shutdown(shutdownCtx); err != nil {
 		log.Fatalf("Server shutdown error: %v\n", err)
 	}
+	_ = orderService.writer.Close()
 	log.Println("✓ Server stopped")
 }
