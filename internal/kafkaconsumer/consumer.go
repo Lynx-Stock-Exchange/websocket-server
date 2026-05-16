@@ -129,10 +129,13 @@ func (c *Consumer) handleOrderBookUpdate(data []byte) {
 }
 
 func (c *Consumer) handleMarketEvent(data []byte) {
-	var payload ws.MarketEventPayload
-	if err := json.Unmarshal(data, &payload); err != nil {
+	var envelope struct {
+		Type    string                `json:"type"`
+		Payload ws.MarketEventPayload `json:"payload"`
+	}
+	if err := json.Unmarshal(data, &envelope); err != nil {
 		log.Printf("market.events: invalid message: %v", err)
 		return
 	}
-	c.hub.PublishMarketEvent(payload)
+	c.hub.PublishMarketEvent(envelope.Payload)
 }
